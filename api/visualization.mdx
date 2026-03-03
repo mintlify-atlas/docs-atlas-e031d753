@@ -1,0 +1,465 @@
+---
+title: 'Visualization'
+description: 'Terminal visualization utilities for hierarchical cluster structures'
+---
+
+## Overview
+
+Kura provides multiple visualization functions for displaying hierarchical cluster structures in the terminal. These functions offer different levels of detail and formatting, from basic tree views to rich, colorful displays.
+
+## Core Functions
+
+### visualise_pipeline_results()
+
+Convenience function for visualizing clusters directly from pipeline results.
+
+```python
+from kura.visualization import visualise_pipeline_results
+
+visualise_pipeline_results(
+    clusters,
+    style="enhanced",
+    console=None
+)
+```
+
+<ParamField path="clusters" type="List[Cluster]" required>
+  List of clusters from pipeline execution
+</ParamField>
+
+<ParamField path="style" type="Literal['basic', 'enhanced', 'rich']" default="enhanced">
+  Visualization style to use:
+  - `"basic"`: Simple tree structure with conversation counts
+  - `"enhanced"`: Includes statistics, percentages, and progress bars
+  - `"rich"`: Full-color Rich library formatting (requires `rich` package)
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich Console instance for `"rich"` style. Created automatically if not provided.
+</ParamField>
+
+#### Example Usage
+
+```python
+from kura.visualization import visualise_pipeline_results
+from kura.v1 import run_pipeline
+
+# Run analysis pipeline
+results = await run_pipeline(
+    conversations=conversations,
+    summary_model=summary_model,
+    cluster_model=cluster_model,
+    meta_cluster_model=meta_cluster_model
+)
+
+# Visualize with different styles
+visualise_pipeline_results(results.meta_clusters, style="basic")
+visualise_pipeline_results(results.meta_clusters, style="enhanced")
+visualise_pipeline_results(results.meta_clusters, style="rich")
+```
+
+### visualise_clusters()
+
+Print a hierarchical visualization of clusters to the terminal with basic formatting.
+
+```python
+from kura.visualization import visualise_clusters
+
+visualise_clusters(
+    clusters=None,
+    checkpoint_path="./checkpoints/meta_clusters.jsonl"
+)
+```
+
+<ParamField path="clusters" type="Optional[List[Cluster]]" default="None">
+  List of clusters to visualize. If None, loads from checkpoint_path.
+</ParamField>
+
+<ParamField path="checkpoint_path" type="Optional[Union[str, Path]]" default="None">
+  Path to checkpoint file to load clusters from. Required if clusters is None.
+</ParamField>
+
+#### Output Example
+
+```
+Clusters (1,234 conversations)
+╠══ Compare and improve Flutter and React state management (45 conversations)
+║   ╚══ Improve and compare Flutter and React state management (32 conversations)
+║       ╠══ Improve React TypeScript application (15 conversations)
+║       ╚══ Compare and select Flutter state management solutions (17 conversations)
+╠══ Optimize blog posts for SEO and improved user engagement (28 conversations)
+╚══ Debug Python application errors (156 conversations)
+```
+
+### visualise_clusters_enhanced()
+
+Print an enhanced hierarchical visualization with colors, statistics, and progress bars.
+
+```python
+from kura.visualization import visualise_clusters_enhanced
+
+visualise_clusters_enhanced(
+    clusters=None,
+    checkpoint_path="./checkpoints/meta_clusters.jsonl"
+)
+```
+
+<ParamField path="clusters" type="Optional[List[Cluster]]" default="None">
+  List of clusters to visualize. If None, loads from checkpoint_path.
+</ParamField>
+
+<ParamField path="checkpoint_path" type="Optional[Union[str, Path]]" default="None">
+  Path to checkpoint file to load clusters from. Required if clusters is None.
+</ParamField>
+
+#### Output Example
+
+```
+================================================================================
+🎯 ENHANCED CLUSTER VISUALIZATION
+================================================================================
+🔸 📚 All Clusters (1,234 total conversations)
+    📊 1,234 conversations (100.0%) [████████████████████]
+
+╠══ 🔸 Compare and improve state management
+║   📊 450 conversations (36.5%) [███████░░░░░░░░░░░░░]
+║   💭 Developers comparing Flutter and React patterns
+║
+╚══ 🔸 Debug application errors
+    📊 784 conversations (63.5%) [████████████░░░░░░░░]
+    💭 Various debugging and troubleshooting requests
+
+================================================================================
+📈 CLUSTER STATISTICS
+================================================================================
+📊 Total Clusters: 42
+🌳 Root Clusters: 8
+💬 Total Conversations: 1,234
+📏 Average Conversations per Root Cluster: 154.2
+================================================================================
+```
+
+### visualise_clusters_rich()
+
+Print a rich-formatted hierarchical visualization using the Rich library with full color and interactive-style formatting.
+
+```python
+from kura.visualization import visualise_clusters_rich
+from rich.console import Console
+
+console = Console()
+visualise_clusters_rich(
+    clusters=None,
+    checkpoint_path="./checkpoints/meta_clusters.jsonl",
+    console=console
+)
+```
+
+<ParamField path="clusters" type="Optional[List[Cluster]]" default="None">
+  List of clusters to visualize. If None, loads from checkpoint_path.
+</ParamField>
+
+<ParamField path="checkpoint_path" type="Optional[Union[str, Path]]" default="None">
+  Path to checkpoint file to load clusters from. Required if clusters is None.
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich Console instance. If None, creates a new one or falls back to enhanced visualization.
+</ParamField>
+
+<Info>
+  Requires the `rich` package to be installed. Falls back to `visualise_clusters_enhanced()` if Rich is not available.
+</Info>
+
+#### Features
+
+- Full-color output with level-based color schemes
+- Interactive-style tree rendering
+- Statistical tables with size distributions
+- Progress bars for visual representation
+- Automatic truncation of long descriptions
+
+### visualise_from_checkpoint_manager()
+
+Visualize clusters using a CheckpointManager and meta cluster model from the v1 pipeline.
+
+```python
+from kura.visualization import visualise_from_checkpoint_manager
+
+visualise_from_checkpoint_manager(
+    checkpoint_manager,
+    meta_cluster_model,
+    style="enhanced",
+    console=None
+)
+```
+
+<ParamField path="checkpoint_manager" type="BaseCheckpointManager" required>
+  CheckpointManager instance from v1 pipeline
+</ParamField>
+
+<ParamField path="meta_cluster_model" type="BaseMetaClusterModel" required>
+  Meta cluster model with checkpoint_filename attribute
+</ParamField>
+
+<ParamField path="style" type="str" default="basic">
+  Visualization style: `"basic"`, `"enhanced"`, or `"rich"`
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich Console instance (for rich style)
+</ParamField>
+
+#### Example Usage
+
+```python
+from kura.visualization import visualise_from_checkpoint_manager
+from kura.checkpoints import JSONLCheckpointManager
+from kura.meta_cluster import MetaClusterModel
+
+# Setup pipeline components
+checkpoint_manager = JSONLCheckpointManager("./checkpoints")
+meta_cluster_model = MetaClusterModel(max_clusters=10)
+
+# Run pipeline...
+# ...
+
+# Visualize results
+visualise_from_checkpoint_manager(
+    checkpoint_manager,
+    meta_cluster_model,
+    style="rich"
+)
+```
+
+## Visualization Styles Comparison
+
+| Style | Colors | Statistics | Progress Bars | Requirements | Best For |
+|-------|--------|------------|---------------|--------------|----------|
+| **basic** | No | Minimal | No | None | Quick checks, CI/CD |
+| **enhanced** | Emoji | Detailed | Yes (ASCII) | None | Regular terminal use |
+| **rich** | Full color | Comprehensive | Yes (styled) | `rich` package | Development, demos |
+
+## Advanced Usage
+
+### Custom Console Configuration
+
+```python
+from rich.console import Console
+from kura.visualization import visualise_clusters_rich
+
+# Configure console for file output
+console = Console(record=True)
+visualise_clusters_rich(clusters, console=console)
+
+# Save to HTML
+console.save_html("clusters.html")
+
+# Save to SVG
+console.save_svg("clusters.svg", title="Cluster Analysis")
+```
+
+### Filtering Clusters Before Visualization
+
+```python
+from kura.visualization import visualise_pipeline_results
+
+# Only visualize large clusters
+large_clusters = [
+    cluster for cluster in clusters
+    if len(cluster.chat_ids) > 50
+]
+
+visualise_pipeline_results(large_clusters, style="enhanced")
+```
+
+### Programmatic Tree Building
+
+```python
+from kura.visualization import _build_cluster_tree
+from kura.types import Cluster
+
+# Build tree structure from clusters
+node_id_to_cluster = _build_cluster_tree(clusters)
+
+# Access tree nodes
+for cluster_id, node in node_id_to_cluster.items():
+    print(f"{node.name}: {node.count} conversations")
+    print(f"Children: {len(node.children)}")
+```
+
+## Integration Examples
+
+### With Class-Based API
+
+```python
+from kura import Kura
+from kura.visualization import visualise_pipeline_results
+
+# Run analysis
+kura = Kura(...)
+await kura.fit(conversations)
+
+# Visualize results
+visualise_pipeline_results(
+    kura.meta_clusters,
+    style="rich"
+)
+```
+
+### With Procedural API (v1)
+
+```python
+from kura.v1 import run_pipeline
+from kura.visualization import visualise_pipeline_results
+
+# Run pipeline
+results = await run_pipeline(
+    conversations=conversations,
+    summary_model=summary_model,
+    cluster_model=cluster_model,
+    meta_cluster_model=meta_cluster_model
+)
+
+# Visualize
+visualise_pipeline_results(
+    results.meta_clusters,
+    style="enhanced"
+)
+```
+
+### Loading from Checkpoint
+
+```python
+from kura.visualization import visualise_clusters_enhanced
+from pathlib import Path
+
+# Visualize from checkpoint file
+checkpoint_path = Path("./checkpoints/meta_clusters.jsonl")
+
+if checkpoint_path.exists():
+    visualise_clusters_enhanced(checkpoint_path=checkpoint_path)
+else:
+    print("Checkpoint not found. Run analysis first.")
+```
+
+## Cluster Tree Structure
+
+### ClusterTreeNode
+
+Internal data structure for tree representation:
+
+```python
+from kura.types import ClusterTreeNode
+
+node = ClusterTreeNode(
+    id="cluster_1",
+    name="Debug Python errors",
+    description="Troubleshooting Python applications",
+    slug="debug-python-errors",
+    count=156,
+    children=["cluster_2", "cluster_3"]
+)
+```
+
+<ResponseField name="id" type="str">
+  Unique identifier for the cluster
+</ResponseField>
+
+<ResponseField name="name" type="str">
+  Human-readable cluster name
+</ResponseField>
+
+<ResponseField name="description" type="str">
+  Detailed description of the cluster
+</ResponseField>
+
+<ResponseField name="slug" type="str">
+  URL-safe slug for the cluster
+</ResponseField>
+
+<ResponseField name="count" type="int">
+  Number of conversations in this cluster
+</ResponseField>
+
+<ResponseField name="children" type="List[str]">
+  List of child cluster IDs
+</ResponseField>
+
+## Best Practices
+
+<Check>
+  **Use `visualise_pipeline_results()`** for the simplest integration with pipeline results.
+</Check>
+
+<Check>
+  **Start with `"enhanced"` style** for a good balance of detail and compatibility.
+</Check>
+
+<Check>
+  **Use `"rich"` style** when presenting results or during development for the best visual experience.
+</Check>
+
+<Check>
+  **Use `"basic"` style** in CI/CD pipelines or when redirecting output to files.
+</Check>
+
+<Check>
+  **Load from checkpoints** when you want to visualize previously computed results without re-running the pipeline.
+</Check>
+
+## Troubleshooting
+
+### Rich Not Available
+
+```python
+from kura.visualization import visualise_pipeline_results
+
+# This will automatically fall back to enhanced style
+visualise_pipeline_results(clusters, style="rich")
+# Output: "Rich library not available. Using enhanced visualization..."
+```
+
+**Solution**: Install the rich package:
+
+```bash
+pip install rich
+# or
+uv pip install rich
+```
+
+### Checkpoint Not Found
+
+```python
+from kura.visualization import visualise_clusters
+
+try:
+    visualise_clusters(checkpoint_path="./missing.jsonl")
+except FileNotFoundError as e:
+    print(f"Error: {e}")
+    print("Run the analysis pipeline first to generate checkpoints.")
+```
+
+### Empty Visualization
+
+```python
+# Ensure clusters have parent-child relationships
+for cluster in clusters:
+    if not cluster.parent_id:
+        print(f"Root cluster: {cluster.name}")
+    else:
+        print(f"Child cluster: {cluster.name} -> parent: {cluster.parent_id}")
+```
+
+### Character Encoding Issues
+
+```python
+# Set encoding for Windows terminals
+import sys
+import io
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
+from kura.visualization import visualise_clusters_enhanced
+visualise_clusters_enhanced(clusters)
+```

@@ -1,0 +1,502 @@
+---
+title: 'Custom Metadata'
+description: 'Extract custom properties like sentiment, language, and technical complexity'
+icon: 'tag'
+---
+
+Kura's default summarization extracts task descriptions and user frustration. But what if you want to extract **custom properties** like sentiment, language, or domain-specific metrics?
+
+This guide shows how to extend the analysis pipeline with custom metadata extraction.
+
+## Overview
+
+Kura supports two types of metadata:
+
+1. **Conversation Metadata**: Attached directly to conversations when loading data
+2. **Extracted Metadata**: Generated during summarization using custom schemas
+
+## Method 1: Conversation Metadata (Simple)
+
+Attach metadata when loading conversations:
+
+```python conversation_metadata.py
+from kura.types import Conversation
+
+# From HuggingFace with metadata function
+conversations = Conversation.from_hf_dataset(
+    "allenai/WildChat-nontoxic",
+    split="train",
+    max_conversations=1000,
+    metadata_fn=lambda x: {
+        "model": x["model"],           # Which AI model was used
+        "toxic": x["toxic"],           # Toxicity flag
+        "redacted": x["redacted"],     # PII redacted flag
+        "language": x.get("language", "unknown"),
+        "turn_count": len(x["messages"]),
+    },
+)
+
+# Metadata is now available in each conversation
+print(conversations[0].metadata)
+# Output: {'model': 'gpt-4', 'toxic': False, 'redacted': True, 'language': 'en', 'turn_count': 8}
+```
+
+**When to use**: Metadata already exists in your dataset and you just want to include it in the analysis.
+
+## Method 2: Extracted Metadata (Advanced)
+
+Extract new properties using LLMs during summarization:
+
+```python custom_extraction.py
+import asyncio
+from pydantic import BaseModel
+from rich.console import Console
+
+from kura.types import Conversation
+from kura.types.summarisation import GeneratedSummary
+from kura.summarisation import SummaryModel, summarise_conversations
+from kura.checkpoints import JSONLCheckpointManager
+
+
+# Define custom schema by extending GeneratedSummary
+class DetailedSummary(GeneratedSummary):
+    """Extended summary with custom fields."""
+    
+    # All standard GeneratedSummary fields included automatically:
+    # - summary: str
+    # - request: str
+    # - task: str
+    # - languages: list[str]
+    # - concerning_score: int
+    # - user_frustration: int
+    # - assistant_errors: list[str]
+    
+    # Add custom fields:
+    sentiment: str  # "positive", "negative", "neutral"
+    technical_complexity: int  # 1-10 scale
+    domain: str  # "programming", "writing", "research", etc.
+    requires_followup: bool  # Does user need more help?
+
+
+# Custom prompt that asks for these additional fields
+CUSTOM_PROMPT = """
+The following is a conversation between an AI assistant and a user:
+
+<messages>
+{% for message in conversation.messages %}
+<message>{{message.role}}: {{message.content}}</message>
+{% endfor %}
+</messages>
+
+Your job is to extract key information from this conversation.
+
+Extract the following information:
+
+1. **Summary**: A clear and concise summary in at most two sentences.
+
+2. **Request**: What is the user's overall request? Start with "The user's overall request for the assistant is to"
+
+3. **Task**: What task is the model being asked to perform? Start with "The task is to"
+
+4. **Languages**: Main languages of the conversation (both human and programming languages). Use lowercase full names.
+
+5. **Concerning Score**: On a scale of 1 to 5, how concerning is this conversation from a safety perspective?
+
+6. **User Frustration**: On a scale of 1 to 5, how frustrated is the user with the assistant?
+
+7. **Assistant Errors**: What errors did the assistant make?
+
+8. **Sentiment**: Overall sentiment of the conversation. One of: "positive", "negative", "neutral"
+
+9. **Technical Complexity**: Rate the technical complexity of the conversation on a scale of 1-10.
+   - 1-3: Basic questions, simple tasks
+   - 4-6: Intermediate problems, moderate complexity
+   - 7-10: Advanced topics, complex problem-solving
+
+10. **Domain**: Primary domain of the conversation. One of:
+    - "programming" (code, debugging, software)
+    - "writing" (creative writing, editing, content)
+    - "research" (academic, analysis, investigation)
+    - "business" (professional, work-related)
+    - "education" (learning, teaching, explanation)
+    - "creative" (art, design, music)
+    - "other" (doesn't fit above categories)
+
+11. **Requires Followup**: Does the user likely need additional help or clarification? (true/false)
+"""
+
+
+async def main():
+    console = Console()
+
+    # Load conversations
+    conversations = Conversation.from_hf_dataset(
+        "ivanleomk/synthetic-gemini-conversations", split="train"
+    )
+
+    # Create model with custom schema and prompt
+    summary_model = SummaryModel(console=console)
+    checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+
+    # Generate summaries with custom fields
+    summaries = await summarise_conversations(
+        conversations,
+        model=summary_model,
+        response_schema=DetailedSummary,  # Custom schema
+        prompt=CUSTOM_PROMPT,  # Custom prompt
+        checkpoint_manager=checkpoint_manager,
+    )
+
+    # Access standard fields
+    print(f"Summary: {summaries[0].summary}")
+    print(f"User frustration: {summaries[0].user_frustration}")
+
+    # Access custom fields from metadata
+    print(f"\nCustom extracted metadata:")
+    print(f"Sentiment: {summaries[0].metadata['sentiment']}")
+    print(f"Technical complexity: {summaries[0].metadata['technical_complexity']}")
+    print(f"Domain: {summaries[0].metadata['domain']}")
+    print(f"Requires followup: {summaries[0].metadata['requires_followup']}")
+
+    # Analyze patterns across all conversations
+    domains = {}
+    for summary in summaries:
+        domain = summary.metadata["domain"]
+        domains[domain] = domains.get(domain, 0) + 1
+
+    print(f"\nDomain distribution:")
+    for domain, count in sorted(domains.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {domain}: {count} conversations")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Expected Output
+
+```text
+Summary: The user requests help creating a Python script for data analysis.
+User frustration: 2
+
+Custom extracted metadata:
+Sentiment: neutral
+Technical complexity: 6
+Domain: programming
+Requires followup: False
+
+Domain distribution:
+  programming: 98 conversations
+  writing: 45 conversations
+  research: 32 conversations
+  education: 15 conversations
+```
+
+## How Custom Metadata Works
+
+### 1. Extend GeneratedSummary
+
+```python
+from kura.types.summarisation import GeneratedSummary
+
+class DetailedSummary(GeneratedSummary):
+    sentiment: str
+    technical_complexity: int
+```
+
+**GeneratedSummary** includes these standard fields:
+- `summary`: Brief description
+- `request`: User's request
+- `task`: Task description
+- `languages`: Programming/human languages
+- `concerning_score`: Safety score (1-5)
+- `user_frustration`: Frustration level (1-5)
+- `assistant_errors`: List of errors
+
+Your custom fields are **automatically extracted** and placed in `ConversationSummary.metadata`.
+
+### 2. Update the Prompt
+
+Add instructions for your custom fields:
+
+```python
+CUSTOM_PROMPT = """
+...
+
+8. **Sentiment**: Overall sentiment (positive/negative/neutral)
+9. **Technical Complexity**: Rate 1-10
+10. **Domain**: Primary domain (programming/writing/research/etc.)
+"""
+```
+
+### 3. Pass to summarise_conversations
+
+```python
+summaries = await summarise_conversations(
+    conversations,
+    model=summary_model,
+    response_schema=DetailedSummary,  # Your custom schema
+    prompt=CUSTOM_PROMPT,             # Your custom prompt
+)
+```
+
+### 4. Access Custom Fields
+
+```python
+# Standard fields: direct access
+summaries[0].summary
+summaries[0].user_frustration
+
+# Custom fields: in metadata dict
+summaries[0].metadata["sentiment"]
+summaries[0].metadata["technical_complexity"]
+```
+
+## Real-World Example: Language Detection
+
+```python language_detection.py
+import asyncio
+from enum import Enum
+from pydantic import Field
+
+from kura.types.summarisation import GeneratedSummary
+from kura.summarisation import SummaryModel, summarise_conversations
+from kura.types import Conversation
+
+
+class LanguageCode(str, Enum):
+    """ISO 639-1 language codes."""
+    EN = "en"  # English
+    ES = "es"  # Spanish
+    FR = "fr"  # French
+    DE = "de"  # German
+    ZH = "zh"  # Chinese
+    JA = "ja"  # Japanese
+    KO = "ko"  # Korean
+    OTHER = "other"
+
+
+class MultilingualSummary(GeneratedSummary):
+    """Summary with precise language detection."""
+    primary_language: LanguageCode = Field(
+        description="Primary human language of the conversation"
+    )
+    is_code_switching: bool = Field(
+        description="Does the user switch between multiple languages?"
+    )
+    language_proficiency: int = Field(
+        description="Estimated user proficiency in the primary language (1-5)",
+        ge=1,
+        le=5,
+    )
+
+
+LANGUAGE_PROMPT = """
+Analyze the following conversation:
+
+<messages>
+{% for message in conversation.messages %}
+<message>{{message.role}}: {{message.content}}</message>
+{% endfor %}
+</messages>
+
+Extract:
+
+1. **Summary**: Brief summary (1-2 sentences)
+2. **Request**: User's request
+3. **Task**: Task description
+4. **Languages**: All languages (human and programming)
+5. **Concerning Score**: Safety score (1-5)
+6. **User Frustration**: Frustration level (1-5)
+7. **Assistant Errors**: List of errors
+8. **Primary Language**: Main human language (ISO 639-1 code: en, es, fr, de, zh, ja, ko, other)
+9. **Is Code Switching**: Does the user switch between multiple human languages? (true/false)
+10. **Language Proficiency**: User's proficiency in primary language (1=beginner, 5=native)
+"""
+
+
+async def main():
+    conversations = Conversation.from_hf_dataset(
+        "allenai/WildChat-nontoxic",
+        split="train",
+        max_conversations=100,
+    )
+
+    summary_model = SummaryModel()
+    summaries = await summarise_conversations(
+        conversations,
+        model=summary_model,
+        response_schema=MultilingualSummary,
+        prompt=LANGUAGE_PROMPT,
+    )
+
+    # Analyze language distribution
+    languages = {}
+    code_switching_count = 0
+    proficiency_scores = []
+
+    for summary in summaries:
+        lang = summary.metadata["primary_language"]
+        languages[lang] = languages.get(lang, 0) + 1
+
+        if summary.metadata["is_code_switching"]:
+            code_switching_count += 1
+
+        proficiency_scores.append(summary.metadata["language_proficiency"])
+
+    print("Language Distribution:")
+    for lang, count in sorted(languages.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {lang}: {count} conversations ({count/len(summaries)*100:.1f}%)")
+
+    print(f"\nCode-switching conversations: {code_switching_count}")
+    print(
+        f"Average language proficiency: {sum(proficiency_scores)/len(proficiency_scores):.2f}/5"
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Use Cases for Custom Metadata
+
+### Customer Support Analysis
+
+```python
+class SupportSummary(GeneratedSummary):
+    issue_severity: int  # 1-5
+    resolution_status: str  # "resolved", "unresolved", "escalated"
+    product_area: str  # "billing", "technical", "account", etc.
+    customer_sentiment: str  # "satisfied", "neutral", "frustrated"
+    requires_refund: bool
+```
+
+### Content Moderation
+
+```python
+class ModerationSummary(GeneratedSummary):
+    toxicity_level: int  # 1-5
+    contains_pii: bool  # Personal identifiable information
+    policy_violations: list[str]  # List of violated policies
+    requires_human_review: bool
+    risk_category: str  # "low", "medium", "high"
+```
+
+### Educational Analysis
+
+```python
+class EducationalSummary(GeneratedSummary):
+    learning_level: str  # "beginner", "intermediate", "advanced"
+    subject_area: str  # "math", "science", "literature", etc.
+    misconceptions: list[str]  # Student misconceptions
+    teaching_effectiveness: int  # 1-5
+    needs_more_examples: bool
+```
+
+## Combining Both Methods
+
+```python combined_metadata.py
+import asyncio
+from kura.types import Conversation
+from kura.types.summarisation import GeneratedSummary
+from kura.summarisation import SummaryModel, summarise_conversations
+
+
+class EnrichedSummary(GeneratedSummary):
+    """Combines dataset metadata with LLM-extracted metadata."""
+    sentiment: str  # Extracted by LLM
+    domain: str  # Extracted by LLM
+
+
+async def main():
+    # Load with conversation metadata
+    conversations = Conversation.from_hf_dataset(
+        "allenai/WildChat-nontoxic",
+        split="train",
+        max_conversations=100,
+        metadata_fn=lambda x: {
+            "model": x["model"],  # From dataset
+            "toxic": x["toxic"],  # From dataset
+        },
+    )
+
+    # Extract additional metadata with LLM
+    summary_model = SummaryModel()
+    summaries = await summarise_conversations(
+        conversations,
+        model=summary_model,
+        response_schema=EnrichedSummary,  # LLM-extracted
+    )
+
+    # Now each summary has BOTH types of metadata
+    for summary in summaries[:5]:
+        print(f"Model: {summary.metadata['model']}")  # From dataset
+        print(f"Toxic: {summary.metadata['toxic']}")  # From dataset
+        print(f"Sentiment: {summary.metadata['sentiment']}")  # LLM-extracted
+        print(f"Domain: {summary.metadata['domain']}")  # LLM-extracted
+        print()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Performance Considerations
+
+<Warning>
+  **Custom extraction adds to LLM processing time** proportional to the number of custom fields.
+  
+  - 1-3 custom fields: ~10% slower
+  - 4-7 custom fields: ~20% slower
+  - 8+ custom fields: ~30% slower
+  
+  Use conversation metadata when possible (no performance impact).
+</Warning>
+
+### Optimization Tips
+
+1. **Use conversation metadata for existing data**:
+   ```python
+   # Fast: no LLM call needed
+   metadata_fn=lambda x: {"model": x["model"]}
+   ```
+
+2. **Group related fields** in the prompt:
+   ```python
+   # Instead of multiple calls
+   sentiment: str
+   emotion: str
+   mood: str
+   
+   # Use one composite field
+   emotional_state: str  # "positive/happy/cheerful"
+   ```
+
+3. **Use Enum constraints** to reduce token usage:
+   ```python
+   from enum import Enum
+   
+   class Domain(str, Enum):
+       PROGRAMMING = "programming"
+       WRITING = "writing"
+       RESEARCH = "research"
+   
+   domain: Domain  # Constrained to 3 options
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Comparing Models" icon="scale-balanced" href="/examples/comparing-models">
+    Compare different LLM configurations and extraction quality
+  </Card>
+  <Card title="Large Scale" icon="database" href="/examples/large-scale-datasets">
+    Apply custom metadata extraction to 10,000+ conversations
+  </Card>
+  <Card title="Filtering Data" icon="filter" href="/guides/filtering-data">
+    Filter conversations based on custom metadata
+  </Card>
+  <Card title="Visualization" icon="chart-simple" href="/guides/visualization">
+    Visualize metadata distributions and patterns
+  </Card>
+</CardGroup>

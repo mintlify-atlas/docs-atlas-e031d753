@@ -1,0 +1,143 @@
+---
+title: "Dimensionality Reduction"
+description: "API reference for dimensionality reduction components"
+---
+
+## HDBUMAP
+
+UMAP-based dimensionality reduction for projecting clusters to 2D space for visualization.
+
+### Constructor
+
+```python
+HDBUMAP(
+    embedding_model: BaseEmbeddingModel = OpenAIEmbeddingModel(),
+    n_components: int = 2,
+    min_dist: float = 0.1,
+    metric: str = "cosine",
+    n_neighbors: Union[int, None] = None,
+)
+```
+
+<ParamField path="embedding_model" type="BaseEmbeddingModel" default="OpenAIEmbeddingModel()">
+  Embedding model to use for converting clusters to vectors
+</ParamField>
+
+<ParamField path="n_components" type="int" default="2">
+  Number of dimensions in the reduced space (typically 2 for visualization)
+</ParamField>
+
+<ParamField path="min_dist" type="float" default="0.1">
+  Minimum distance between points in the low-dimensional representation. Lower values create more tightly packed clusters.
+</ParamField>
+
+<ParamField path="metric" type="str" default="cosine">
+  Distance metric to use for UMAP (e.g., "cosine", "euclidean", "manhattan")
+</ParamField>
+
+<ParamField path="n_neighbors" type="Union[int, None]" default="None">
+  Number of neighbors to consider for UMAP. If None, defaults to min(15, len(embeddings) - 1)
+</ParamField>
+
+### Methods
+
+#### reduce_dimensionality()
+
+Reduce dimensionality of clusters to 2D space using UMAP.
+
+```python
+async def reduce_dimensionality(
+    clusters: list[Cluster]
+) -> list[ProjectedCluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of clusters to project to 2D space
+</ParamField>
+
+<ResponseField name="return" type="list[ProjectedCluster]">
+  List of projected clusters with x_coord, y_coord, and level fields populated
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.dimensionality import HDBUMAP
+from kura.embedding import OpenAIEmbeddingModel
+
+# Create UMAP reducer with custom parameters
+reducer = HDBUMAP(
+    embedding_model=OpenAIEmbeddingModel(model_name="text-embedding-3-large"),
+    n_components=2,
+    min_dist=0.05,
+    metric="cosine",
+    n_neighbors=20
+)
+
+# Project clusters to 2D
+projected = await reducer.reduce_dimensionality(clusters)
+
+# Access 2D coordinates
+for cluster in projected:
+    print(f"{cluster.name}: ({cluster.x_coord}, {cluster.y_coord})")
+```
+
+---
+
+## reduce_dimensionality_from_clusters()
+
+Reduce dimensions of clusters for visualization. Projects clusters to 2D space using the provided dimensionality reduction model. Supports different algorithms (UMAP, t-SNE, PCA, etc.) through the model interface.
+
+```python
+async def reduce_dimensionality_from_clusters(
+    clusters: list[Cluster],
+    *,
+    model: BaseDimensionalityReduction,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+) -> list[ProjectedCluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of clusters to project
+</ParamField>
+
+<ParamField path="model" type="BaseDimensionalityReduction" required>
+  Dimensionality reduction model to use (UMAP, t-SNE, etc.)
+</ParamField>
+
+<ParamField path="checkpoint_manager" type="Optional[BaseCheckpointManager]" default="None">
+  Optional checkpoint manager for caching
+</ParamField>
+
+<ResponseField name="return" type="list[ProjectedCluster]">
+  List of projected clusters with 2D coordinates
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.dimensionality import (
+    HDBUMAP,
+    reduce_dimensionality_from_clusters
+)
+from kura.base_classes.checkpoint import JSONCheckpointManager
+
+# Create dimensionality reduction model
+dim_model = HDBUMAP(
+    n_components=2,
+    min_dist=0.1,
+    n_neighbors=15
+)
+
+# Create checkpoint manager
+checkpoint_mgr = JSONCheckpointManager("./checkpoints")
+
+# Reduce dimensionality with checkpointing
+projected = await reduce_dimensionality_from_clusters(
+    clusters=hierarchical_clusters,
+    model=dim_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+print(f"Projected {len(projected)} clusters to 2D space")
+```

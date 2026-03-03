@@ -1,0 +1,476 @@
+---
+title: 'CLI'
+description: 'Command-line interface for running Kura analysis and managing checkpoints'
+---
+
+## Overview
+
+Kura provides a command-line interface (CLI) built with Typer for starting the web application and managing checkpoints.
+
+## Installation
+
+The CLI is installed automatically with Kura:
+
+```bash
+pip install kura
+# or
+uv pip install kura
+```
+
+Verify installation:
+
+```bash
+kura --help
+```
+
+## Commands
+
+### start-app
+
+Start the FastAPI web server with the Kura analysis UI.
+
+```bash
+kura start-app [OPTIONS]
+```
+
+#### Options
+
+<ParamField path="--dir" type="str" default="./checkpoints">
+  Directory to use for checkpoints, relative to the current directory.
+</ParamField>
+
+<ParamField path="--checkpoint-format" type="str" default="jsonl">
+  Checkpoint format to use:
+  - `jsonl`: Legacy JSONL format (default)
+  - `hf-dataset`: HuggingFace datasets format (recommended for large datasets)
+</ParamField>
+
+#### Examples
+
+**Basic usage:**
+
+```bash
+kura start-app
+```
+
+This starts the server at `http://localhost:8000` using the default `./checkpoints` directory with JSONL format.
+
+**Custom checkpoint directory:**
+
+```bash
+kura start-app --dir ./my-analysis/checkpoints
+```
+
+**Use HuggingFace datasets format:**
+
+```bash
+kura start-app --checkpoint-format hf-dataset
+```
+
+**Full example with all options:**
+
+```bash
+kura start-app \
+  --dir ./production-checkpoints \
+  --checkpoint-format hf-dataset
+```
+
+#### Output
+
+```
+🚀 Starting Kura with hf-dataset checkpoints at ./checkpoints
+Access website at http://localhost:8000
+
+INFO:     Started server process [12345]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+#### Environment Variables
+
+The command sets the following environment variables:
+
+- `KURA_CHECKPOINT_DIR`: Checkpoint directory path
+- `KURA_CHECKPOINT_FORMAT`: Checkpoint format (`jsonl` or `hf-dataset`)
+
+#### Server Configuration
+
+The server runs with these settings:
+
+- **Host**: `0.0.0.0` (accessible from all network interfaces)
+- **Port**: `8000`
+- **Auto-reload**: Disabled (enable in development mode if needed)
+
+### analyze-checkpoints
+
+<Warning>
+  This command is documented in the project README but not yet implemented in the CLI.
+</Warning>
+
+Analyze existing JSONL checkpoints and estimate migration benefits.
+
+#### Planned Usage
+
+```bash
+kura analyze-checkpoints <checkpoint-dir>
+```
+
+#### Expected Output
+
+```
+Analyzing checkpoints in ./checkpoints...
+
+Checkpoint Statistics:
+  Total files: 5
+  Total size: 2.4 GB
+  Total records: 125,430
+
+Estimated Migration Benefits:
+  HF Datasets size: ~1.2 GB (50% reduction)
+  Parquet size: ~1.1 GB (54% reduction)
+  
+Recommendation: Migrate to HF Datasets format for large datasets
+```
+
+### migrate-checkpoints
+
+<Warning>
+  This command is documented in the project README but not yet implemented in the CLI.
+</Warning>
+
+Migrate JSONL checkpoints to HuggingFace datasets format.
+
+#### Planned Usage
+
+```bash
+kura migrate-checkpoints <source-dir> <target-dir> [OPTIONS]
+```
+
+#### Planned Options
+
+<ParamField path="--hub-repo" type="str">
+  HuggingFace Hub repository to upload migrated checkpoints (e.g., "username/repo-name")
+</ParamField>
+
+<ParamField path="--hub-token" type="str">
+  HuggingFace Hub authentication token for private repositories
+</ParamField>
+
+<ParamField path="--compression" type="str" default="gzip">
+  Compression algorithm: `gzip`, `lz4`, `zstd`, or `none`
+</ParamField>
+
+#### Planned Examples
+
+**Basic migration:**
+
+```bash
+kura migrate-checkpoints ./old-checkpoints ./new-hf-checkpoints
+```
+
+**Migrate with Hub upload:**
+
+```bash
+kura migrate-checkpoints ./old-checkpoints ./new-hf-checkpoints \
+  --hub-repo my-username/kura-analysis \
+  --hub-token $HF_TOKEN
+```
+
+**Use different compression:**
+
+```bash
+kura migrate-checkpoints ./old-checkpoints ./new-hf-checkpoints \
+  --compression zstd
+```
+
+#### Expected Output
+
+```
+Migrating checkpoints from ./old-checkpoints to ./new-hf-checkpoints...
+
+Processing summaries.jsonl... ✓ (45,230 records)
+Processing clusters.jsonl... ✓ (1,243 records)
+Processing meta_clusters.jsonl... ✓ (156 records)
+Processing projected_clusters.jsonl... ✓ (156 records)
+
+Migration complete!
+  Source size: 2.4 GB
+  Target size: 1.2 GB (50% reduction)
+  
+Uploading to HuggingFace Hub: my-username/kura-analysis... ✓
+```
+
+## Development Usage
+
+### Running from Source
+
+When developing Kura, you can run the CLI directly:
+
+```bash
+# Install in development mode
+uv pip install -e ".[dev]"
+
+# Run CLI
+kura start-app
+```
+
+### Custom Server Configuration
+
+For development with auto-reload:
+
+```python
+# In kura/cli/cli.py
+import uvicorn
+
+uvicorn.run(
+    "kura.cli.server:api",
+    host="0.0.0.0",
+    port=8000,
+    reload=True,  # Enable auto-reload
+    reload_dirs=["./kura"]  # Watch these directories
+)
+```
+
+### Adding New Commands
+
+Extend the CLI by adding new commands:
+
+```python
+import typer
+from kura.cli.cli import app
+
+@app.command()
+def analyze_checkpoints(
+    checkpoint_dir: str = typer.Argument(..., help="Directory containing checkpoints")
+):
+    """Analyze checkpoint statistics and estimate migration benefits."""
+    from pathlib import Path
+    import json
+    
+    path = Path(checkpoint_dir)
+    if not path.exists():
+        typer.echo(f"Error: Directory {checkpoint_dir} not found", err=True)
+        raise typer.Exit(1)
+    
+    # Analysis logic here
+    typer.echo(f"Analyzing checkpoints in {checkpoint_dir}...")
+```
+
+## Integration with Web UI
+
+### Accessing the Web Interface
+
+After running `kura start-app`, access the web interface:
+
+```bash
+# Open in browser
+open http://localhost:8000
+
+# Or on Linux
+xdg-open http://localhost:8000
+```
+
+### Web UI Features
+
+- **Upload conversations**: Upload and analyze conversation data
+- **Cluster visualization**: Interactive cluster maps and hierarchies
+- **Conversation browser**: Browse and search conversations
+- **Export results**: Download analysis results
+
+### API Endpoints
+
+The server exposes FastAPI endpoints at:
+
+- `http://localhost:8000/docs` - Interactive API documentation (Swagger UI)
+- `http://localhost:8000/redoc` - Alternative API documentation (ReDoc)
+
+See the web UI documentation in your browser for endpoint details.
+
+## Configuration Files
+
+### Environment Configuration
+
+Create a `.env` file for persistent configuration:
+
+```bash
+# .env
+KURA_CHECKPOINT_DIR=./production-checkpoints
+KURA_CHECKPOINT_FORMAT=hf-dataset
+HF_TOKEN=hf_your_token_here
+```
+
+Load in your application:
+
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+checkpoint_dir = os.getenv("KURA_CHECKPOINT_DIR", "./checkpoints")
+checkpoint_format = os.getenv("KURA_CHECKPOINT_FORMAT", "jsonl")
+```
+
+### Configuration Priority
+
+1. Command-line arguments (highest priority)
+2. Environment variables
+3. Default values (lowest priority)
+
+## Best Practices
+
+<Check>
+  **Use HuggingFace datasets format** for large-scale analyses (>100K conversations) to reduce storage and improve performance.
+</Check>
+
+<Check>
+  **Set a custom checkpoint directory** for each project to keep analyses organized.
+</Check>
+
+<Check>
+  **Use environment variables** for production deployments to avoid hardcoding configuration.
+</Check>
+
+<Check>
+  **Enable auto-reload** during development to speed up the feedback loop.
+</Check>
+
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+# Error: Address already in use
+ERROR:    [Errno 48] Address already in use
+```
+
+**Solution**: Kill the process using port 8000 or use a different port:
+
+```bash
+# Find and kill process
+lsof -ti:8000 | xargs kill -9
+
+# Or modify server.py to use a different port
+uvicorn.run(api, host="0.0.0.0", port=8080)
+```
+
+### Checkpoint Directory Not Found
+
+```bash
+kura start-app --dir ./missing-dir
+```
+
+**Solution**: Create the directory or use an existing one:
+
+```bash
+mkdir -p ./missing-dir
+kura start-app --dir ./missing-dir
+```
+
+### Import Errors
+
+```bash
+ModuleNotFoundError: No module named 'kura'
+```
+
+**Solution**: Install Kura in development mode:
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+### HuggingFace Datasets Not Available
+
+```bash
+kura start-app --checkpoint-format hf-dataset
+# Error: HuggingFace datasets is required
+```
+
+**Solution**: Install the optional dependency:
+
+```bash
+uv pip install datasets
+# or install all optional dependencies
+uv pip install -e ".[all]"
+```
+
+## Examples
+
+### Production Deployment
+
+```bash
+#!/bin/bash
+# deploy.sh
+
+export KURA_CHECKPOINT_DIR=/data/kura/checkpoints
+export KURA_CHECKPOINT_FORMAT=hf-dataset
+
+# Start server with production settings
+kura start-app \
+  --dir $KURA_CHECKPOINT_DIR \
+  --checkpoint-format $KURA_CHECKPOINT_FORMAT
+```
+
+### Development Workflow
+
+```bash
+# Terminal 1: Start server with auto-reload
+kura start-app --dir ./dev-checkpoints
+
+# Terminal 2: Run analysis
+python scripts/analyze.py
+
+# Terminal 3: Watch logs
+tail -f logs/kura.log
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/test.yml
+name: Test Kura CLI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv pip install -e ".[dev]"
+      
+      - name: Test CLI
+        run: |
+          kura --help
+          # Add more CLI tests
+```
+
+### Docker Deployment
+
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY . .
+RUN pip install uv && uv pip install -e ".[all]"
+
+EXPOSE 8000
+
+CMD ["kura", "start-app", "--dir", "/data/checkpoints", "--checkpoint-format", "hf-dataset"]
+```
+
+```bash
+# Build and run
+docker build -t kura .
+docker run -p 8000:8000 -v $(pwd)/data:/data kura
+```

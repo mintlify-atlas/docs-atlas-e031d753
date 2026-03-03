@@ -1,0 +1,220 @@
+---
+title: "Clustering"
+description: "API reference for conversation clustering components"
+---
+
+## ClusterDescriptionModel
+
+Model for generating cluster descriptions using LLMs. Similar to SummaryModel, this handles the LLM interaction for generating cluster names and descriptions with configurable parameters.
+
+### Constructor
+
+```python
+ClusterDescriptionModel(
+    model: Union[str, "KnownModelName"] = "openai/gpt-4o-mini",
+    max_concurrent_requests: int = 50,
+    temperature: float = 0.2,
+    checkpoint_filename: str = "clusters",
+    console: Optional[Console] = None,
+)
+```
+
+<ParamField path="model" type="Union[str, KnownModelName]" default="openai/gpt-4o-mini">
+  Model identifier (e.g., "openai/gpt-4o-mini")
+</ParamField>
+
+<ParamField path="max_concurrent_requests" type="int" default="50">
+  Maximum concurrent API requests
+</ParamField>
+
+<ParamField path="temperature" type="float" default="0.2">
+  LLM temperature for generation
+</ParamField>
+
+<ParamField path="checkpoint_filename" type="str" default="clusters">
+  Filename for checkpointing
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich console for progress tracking
+</ParamField>
+
+### Methods
+
+#### generate_clusters()
+
+Generate clusters from a mapping of cluster IDs to summaries.
+
+```python
+async def generate_clusters(
+    cluster_id_to_summaries: Dict[int, List[ConversationSummary]],
+    prompt: str = DEFAULT_CLUSTER_PROMPT,
+    max_contrastive_examples: int = 10,
+) -> List[Cluster]
+```
+
+<ParamField path="cluster_id_to_summaries" type="Dict[int, List[ConversationSummary]]" required>
+  Mapping of cluster IDs to their conversation summaries
+</ParamField>
+
+<ParamField path="prompt" type="str" default="DEFAULT_CLUSTER_PROMPT">
+  Custom prompt for cluster generation
+</ParamField>
+
+<ParamField path="max_contrastive_examples" type="int" default="10">
+  Number of contrastive examples from other clusters to use
+</ParamField>
+
+<ResponseField name="return" type="List[Cluster]">
+  List of clusters with generated names and descriptions
+</ResponseField>
+
+#### generate_cluster_description()
+
+Generate a cluster description from summaries with contrastive examples.
+
+```python
+async def generate_cluster_description(
+    summaries: List[ConversationSummary],
+    contrastive_examples: List[ConversationSummary],
+    semaphore: Semaphore,
+    client: "AsyncInstructor",
+    prompt: str = DEFAULT_CLUSTER_PROMPT,
+) -> Cluster
+```
+
+<ParamField path="summaries" type="List[ConversationSummary]" required>
+  Summaries in this cluster
+</ParamField>
+
+<ParamField path="contrastive_examples" type="List[ConversationSummary]" required>
+  Examples from other clusters for contrast
+</ParamField>
+
+<ParamField path="semaphore" type="Semaphore" required>
+  Asyncio semaphore for rate limiting
+</ParamField>
+
+<ParamField path="client" type="AsyncInstructor" required>
+  Instructor async client for LLM calls
+</ParamField>
+
+<ParamField path="prompt" type="str" default="DEFAULT_CLUSTER_PROMPT">
+  Custom prompt for cluster generation
+</ParamField>
+
+<ResponseField name="return" type="Cluster">
+  Cluster with generated name and description
+</ResponseField>
+
+---
+
+## generate_base_clusters_from_conversation_summaries()
+
+Cluster conversation summaries using embeddings. This is the main entry point for generating base clusters from conversation summaries.
+
+```python
+async def generate_base_clusters_from_conversation_summaries(
+    summaries: List[ConversationSummary],
+    embedding_model: Optional[BaseEmbeddingModel] = None,
+    clustering_method: Optional[BaseClusteringMethod] = None,
+    clustering_model: Optional[BaseClusterDescriptionModel] = None,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+    max_contrastive_examples: int = 10,
+    prompt: str = DEFAULT_CLUSTER_PROMPT,
+    **kwargs,
+) -> List[Cluster]
+```
+
+<ParamField path="summaries" type="List[ConversationSummary]" required>
+  List of conversation summaries to cluster
+</ParamField>
+
+<ParamField path="embedding_model" type="Optional[BaseEmbeddingModel]" default="None">
+  Model for generating embeddings (defaults to OpenAI)
+</ParamField>
+
+<ParamField path="clustering_method" type="Optional[BaseClusteringMethod]" default="None">
+  Clustering algorithm (defaults to K-means)
+</ParamField>
+
+<ParamField path="clustering_model" type="Optional[BaseClusterDescriptionModel]" default="None">
+  Model for generating cluster descriptions
+</ParamField>
+
+<ParamField path="checkpoint_manager" type="Optional[BaseCheckpointManager]" default="None">
+  Optional checkpoint manager for caching
+</ParamField>
+
+<ParamField path="max_contrastive_examples" type="int" default="10">
+  Number of contrastive examples to use
+</ParamField>
+
+<ParamField path="prompt" type="str" default="DEFAULT_CLUSTER_PROMPT">
+  Custom prompt for cluster generation
+</ParamField>
+
+<ResponseField name="return" type="List[Cluster]">
+  List of clusters with generated names and descriptions
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.cluster import (
+    generate_base_clusters_from_conversation_summaries,
+    ClusterDescriptionModel,
+    KmeansClusteringModel
+)
+from kura.embedding import OpenAIEmbeddingModel
+
+# Use default models
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=conversation_summaries
+)
+
+# Or customize each component
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=conversation_summaries,
+    embedding_model=OpenAIEmbeddingModel(model_name="text-embedding-3-large"),
+    clustering_method=KmeansClusteringModel(clusters_per_group=15),
+    clustering_model=ClusterDescriptionModel(model="openai/gpt-4o"),
+    max_contrastive_examples=20
+)
+```
+
+---
+
+## KmeansClusteringModel
+
+K-means based clustering method for grouping conversation summaries.
+
+### Constructor
+
+```python
+KmeansClusteringModel(clusters_per_group: int = 10)
+```
+
+<ParamField path="clusters_per_group" type="int" default="10">
+  Target number of items per cluster (actual cluster count will be calculated as ceiling(n_items / clusters_per_group))
+</ParamField>
+
+### Methods
+
+#### cluster()
+
+Perform K-means clustering on items with embeddings.
+
+```python
+def cluster(
+    items: list[dict[str, Union[ConversationSummary, list[float]]]]
+) -> dict[int, list[ConversationSummary]]
+```
+
+<ParamField path="items" type="list[dict[str, Union[ConversationSummary, list[float]]]]" required>
+  List of items with "embedding" and "item" keys
+</ParamField>
+
+<ResponseField name="return" type="dict[int, list[ConversationSummary]]">
+  Dictionary mapping cluster IDs to their conversation summaries
+</ResponseField>

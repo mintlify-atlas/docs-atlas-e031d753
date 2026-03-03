@@ -1,0 +1,106 @@
+---
+title: ProjectedCluster
+description: Cluster with 2D coordinates for visualization
+---
+
+## ProjectedCluster
+
+Extends `Cluster` with 2D projection coordinates for visualization on a scatter plot or map.
+
+<ResponseField name="x_coord" type="float" required>
+  X-axis coordinate in the 2D projection space
+</ResponseField>
+
+<ResponseField name="y_coord" type="float" required>
+  Y-axis coordinate in the 2D projection space
+</ResponseField>
+
+<ResponseField name="level" type="int" required>
+  Hierarchy level of the cluster (0 for root, increasing for deeper levels)
+</ResponseField>
+
+<ResponseField name="id" type="str" required>
+  <Expandable title="Inherited from Cluster">
+    Unique identifier for the cluster. Auto-generated using `uuid.uuid4().hex` if not provided
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="name" type="str" required>
+  <Expandable title="Inherited from Cluster">
+    Short, imperative sentence describing the cluster (at most ten words)
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="description" type="str" required>
+  <Expandable title="Inherited from Cluster">
+    Detailed description of what conversations in this cluster are about
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="slug" type="str" required>
+  <Expandable title="Inherited from Cluster">
+    Three-word snake_case summary of the cluster topic
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="chat_ids" type="list[str]" required>
+  <Expandable title="Inherited from Cluster">
+    List of conversation IDs belonging to this cluster
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="parent_id" type="Union[str, None]" required>
+  <Expandable title="Inherited from Cluster">
+    ID of the parent cluster in the hierarchy, or None for top-level clusters
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="count" type="int" computed>
+  <Expandable title="Inherited from Cluster">
+    Number of conversations in this cluster. Computed from `len(chat_ids)`
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```python
+from kura.types import ProjectedCluster
+
+projected = ProjectedCluster(
+    id="cluster-123",
+    name="Debug Python asyncio issues",
+    description="Users troubleshooting asyncio event loops and coroutine errors in Python.",
+    slug="python_asyncio_debugging",
+    chat_ids=["chat-1", "chat-2", "chat-3", "chat-4"],
+    parent_id="parent-cluster-456",
+    x_coord=12.5,
+    y_coord=-8.3,
+    level=2
+)
+
+print(f"Cluster at ({projected.x_coord}, {projected.y_coord})")
+print(f"Contains {projected.count} conversations at level {projected.level}")
+# Cluster at (12.5, -8.3)
+# Contains 4 conversations at level 2
+```
+
+### Use Case
+
+Projected clusters are used for visualization in the Kura UI. The coordinates represent the cluster's position after dimensionality reduction (typically UMAP), allowing related clusters to be positioned near each other on a 2D map.
+
+The `level` field indicates the cluster's position in the meta-clustering hierarchy:
+- `level=0`: Root-level clusters (highest abstraction)
+- `level=1`: First-level sub-clusters
+- `level=2+`: Deeper nested clusters
+
+```python
+# Typical usage in visualization pipeline
+from kura.dimensionality import HDBUMAP
+
+reducer = HDBUMAP()
+projected_clusters = reducer.reduce(clusters, embeddings)
+
+# Each projected_cluster now has x_coord, y_coord, and level
+for cluster in projected_clusters:
+    plot_point(cluster.x_coord, cluster.y_coord, label=cluster.name)
+```

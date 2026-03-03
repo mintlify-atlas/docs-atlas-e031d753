@@ -1,0 +1,370 @@
+---
+title: 'Checkpoints'
+description: 'Checkpoint management system for storing and loading intermediate pipeline results'
+---
+
+## Overview
+
+Kura provides a flexible checkpoint management system for persisting intermediate pipeline results. The system supports multiple backends with different performance and feature characteristics.
+
+## Available Checkpoint Managers
+
+### JSONLCheckpointManager
+
+The traditional JSONL file-based checkpoint system. This is the default and most compatible option.
+
+```python
+from kura.checkpoints import JSONLCheckpointManager
+
+manager = JSONLCheckpointManager(
+    checkpoint_dir="./checkpoints",
+    enabled=True
+)
+```
+
+<ParamField path="checkpoint_dir" type="str" required>
+  Directory path for saving checkpoints
+</ParamField>
+
+<ParamField path="enabled" type="bool" default="True">
+  Whether checkpointing is enabled
+</ParamField>
+
+#### Methods
+
+<ResponseField name="load_checkpoint" type="Optional[List[T]]">
+  Load data from a checkpoint file if it exists.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint file
+  - `model_class` (type[T]): Pydantic model class for deserializing the data
+  
+  **Returns:** List of model instances if checkpoint exists, None otherwise
+</ResponseField>
+
+<ResponseField name="save_checkpoint" type="None">
+  Save data to a checkpoint file.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint file
+  - `data` (List[T]): List of model instances to save
+</ResponseField>
+
+<ResponseField name="list_checkpoints" type="List[str]">
+  List all available checkpoint files.
+  
+  **Returns:** List of checkpoint filenames
+</ResponseField>
+
+<ResponseField name="delete_checkpoint" type="bool">
+  Delete a checkpoint file.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint file to delete
+  
+  **Returns:** True if file was deleted, False if it didn't exist
+</ResponseField>
+
+#### Example Usage
+
+```python
+from kura.checkpoints import JSONLCheckpointManager
+from kura.types import ConversationSummary
+
+# Initialize manager
+manager = JSONLCheckpointManager("./my-checkpoints")
+
+# Save checkpoint
+summaries = [...]  # List of ConversationSummary objects
+manager.save_checkpoint("summaries", summaries)
+
+# Load checkpoint
+loaded = manager.load_checkpoint("summaries.jsonl", ConversationSummary)
+
+# List available checkpoints
+checkpoints = manager.list_checkpoints()
+print(checkpoints)  # ['summaries.jsonl', 'clusters.jsonl']
+
+# Delete checkpoint
+manager.delete_checkpoint("old_summaries.jsonl")
+```
+
+### HFDatasetCheckpointManager
+
+HuggingFace datasets-based checkpoint system with advanced features like streaming, versioning, and cloud storage integration.
+
+```python
+from kura.checkpoints import HFDatasetCheckpointManager
+
+manager = HFDatasetCheckpointManager(
+    checkpoint_dir="./hf-checkpoints",
+    enabled=True,
+    hub_repo="my-username/kura-analysis",
+    hub_token="hf_...",
+    streaming=False,
+    compression="gzip"
+)
+```
+
+<ParamField path="checkpoint_dir" type="str" required>
+  Directory path for saving checkpoints locally
+</ParamField>
+
+<ParamField path="enabled" type="bool" default="True">
+  Whether checkpointing is enabled
+</ParamField>
+
+<ParamField path="hub_repo" type="Optional[str]" default="None">
+  HuggingFace Hub repository name for cloud storage (e.g., "username/repo-name")
+</ParamField>
+
+<ParamField path="hub_token" type="Optional[str]" default="None">
+  HuggingFace Hub authentication token for private repositories
+</ParamField>
+
+<ParamField path="streaming" type="bool" default="False">
+  Whether to use streaming mode by default for memory-efficient processing
+</ParamField>
+
+<ParamField path="compression" type="Optional[str]" default="gzip">
+  Compression algorithm to use. Options: `"gzip"`, `"lz4"`, `"zstd"`, or `None`
+</ParamField>
+
+#### Features
+
+- **Memory-mapped files**: Efficient access without loading everything into memory
+- **Streaming support**: Process datasets larger than available RAM
+- **Built-in compression**: Automatic compression with multiple algorithms
+- **Version control**: Track changes via HuggingFace Hub
+- **Rich querying**: Filter and search capabilities
+- **Schema validation**: Type safety with predefined schemas
+
+#### Methods
+
+<ResponseField name="load_checkpoint" type="Optional[List[T]]">
+  Load data from a checkpoint using HuggingFace datasets.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint
+  - `model_class` (type[T]): Pydantic model class for deserializing
+  - `streaming` (Optional[bool]): Override default streaming mode
+  - `checkpoint_type` (Optional[str]): Type hint for deserialization
+  
+  **Returns:** List of model instances if checkpoint exists, None otherwise
+</ResponseField>
+
+<ResponseField name="save_checkpoint" type="None">
+  Save data to a checkpoint using HuggingFace datasets.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint (without extension)
+  - `data` (List[T]): List of model instances to save
+  - `checkpoint_type` (Optional[str]): Type hint for schema selection
+</ResponseField>
+
+<ResponseField name="get_checkpoint_info" type="Optional[Dict[str, Any]]">
+  Get information about a checkpoint dataset.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint
+  
+  **Returns:** Dictionary with checkpoint metadata and statistics including:
+  - `num_rows`: Number of records
+  - `num_columns`: Number of columns
+  - `column_names`: List of column names
+  - `features`: Dataset schema information
+  - `size_bytes`: Total size on disk
+</ResponseField>
+
+<ResponseField name="filter_checkpoint" type="Optional[List[T]]">
+  Filter a checkpoint dataset without loading everything into memory.
+  
+  **Parameters:**
+  - `filename` (str): Name of the checkpoint
+  - `filter_fn` (Callable[[Dict[str, Any]], bool]): Function to filter rows
+  - `model_class` (type[T]): Pydantic model class for results
+  - `checkpoint_type` (Optional[str]): Type hint for deserialization
+  
+  **Returns:** List of filtered model instances
+</ResponseField>
+
+#### Example Usage
+
+```python
+from kura.checkpoints import HFDatasetCheckpointManager
+from kura.types import Cluster
+
+# Initialize with HuggingFace Hub integration
+manager = HFDatasetCheckpointManager(
+    checkpoint_dir="./hf-checkpoints",
+    hub_repo="my-username/kura-analysis",
+    hub_token="hf_xxx",
+    compression="gzip"
+)
+
+# Save checkpoint (auto-uploads to Hub if configured)
+clusters = [...]  # List of Cluster objects
+manager.save_checkpoint(
+    "meta_clusters",
+    clusters,
+    checkpoint_type="clusters"
+)
+
+# Get checkpoint information
+info = manager.get_checkpoint_info("meta_clusters")
+print(f"Rows: {info['num_rows']}, Size: {info['size_bytes']} bytes")
+
+# Filter checkpoint without loading all data
+large_clusters = manager.filter_checkpoint(
+    "meta_clusters",
+    filter_fn=lambda x: len(x['chat_ids']) > 100,
+    model_class=Cluster,
+    checkpoint_type="clusters"
+)
+
+# Load with streaming for large datasets
+manager_stream = HFDatasetCheckpointManager(
+    checkpoint_dir="./hf-checkpoints",
+    streaming=True
+)
+data = manager_stream.load_checkpoint(
+    "large_dataset",
+    Cluster,
+    checkpoint_type="clusters"
+)
+```
+
+#### Supported Data Types
+
+The HFDatasetCheckpointManager has predefined schemas for:
+
+- **conversations**: `Conversation` objects with messages and metadata
+- **summaries**: `ConversationSummary` objects with embeddings
+- **clusters**: `Cluster` objects with hierarchical relationships
+- **projected_clusters**: `ProjectedCluster` objects with 2D coordinates
+
+### MultiCheckpointManager
+
+Coordinates multiple checkpoint backends simultaneously for redundancy and performance optimization.
+
+```python
+from kura.checkpoints import (
+    MultiCheckpointManager,
+    JSONLCheckpointManager,
+    HFDatasetCheckpointManager
+)
+
+# Create multiple backends
+jsonl_backend = JSONLCheckpointManager("./jsonl-checkpoints")
+hf_backend = HFDatasetCheckpointManager("./hf-checkpoints")
+
+# Coordinate them
+manager = MultiCheckpointManager([jsonl_backend, hf_backend])
+
+# Operations apply to all backends
+manager.save_checkpoint("data", items)
+```
+
+## Base Class
+
+### BaseCheckpointManager
+
+Abstract base class that all checkpoint managers inherit from.
+
+```python
+from kura.base_classes import BaseCheckpointManager
+from typing import Optional, List, TypeVar
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
+
+class CustomCheckpointManager(BaseCheckpointManager):
+    def setup_checkpoint_dir(self) -> None:
+        # Setup logic
+        pass
+    
+    def load_checkpoint(
+        self, filename: str, model_class: type[T], **kwargs
+    ) -> Optional[List[T]]:
+        # Load logic
+        pass
+    
+    def save_checkpoint(self, filename: str, data: List[T], **kwargs) -> None:
+        # Save logic
+        pass
+    
+    def list_checkpoints(self) -> List[str]:
+        # List logic
+        pass
+```
+
+## Configuration
+
+### Environment Variables
+
+Checkpoint managers can be configured via environment variables:
+
+```bash
+# Set checkpoint directory
+export KURA_CHECKPOINT_DIR="./my-checkpoints"
+
+# Set checkpoint format
+export KURA_CHECKPOINT_FORMAT="hf-dataset"  # or "jsonl"
+```
+
+### In Pipeline
+
+Checkpoint managers integrate with the Kura pipeline:
+
+```python
+from kura.v1 import Pipeline
+from kura.checkpoints import HFDatasetCheckpointManager
+
+pipeline = Pipeline(
+    checkpoint_manager=HFDatasetCheckpointManager(
+        checkpoint_dir="./checkpoints",
+        compression="zstd"  # Better compression
+    )
+)
+```
+
+## Performance Comparison
+
+| Feature | JSONL | HuggingFace Datasets |
+|---------|-------|---------------------|
+| Compatibility | High | Requires `datasets` package |
+| Compression | None | 50%+ space savings |
+| Loading Speed | Fast for small data | Faster for large data |
+| Memory Usage | Loads all into RAM | Memory-mapped |
+| Streaming | No | Yes |
+| Cloud Storage | Manual | Built-in (Hub) |
+| Querying | Manual filtering | Rich query support |
+
+## Best Practices
+
+<Check>
+  **Use JSONLCheckpointManager for**:
+  - Small to medium datasets (< 100K conversations)
+  - Maximum compatibility
+  - Simple local storage needs
+</Check>
+
+<Check>
+  **Use HFDatasetCheckpointManager for**:
+  - Large datasets (> 100K conversations)
+  - Memory-constrained environments
+  - Cloud storage and versioning needs
+  - Advanced filtering and querying
+</Check>
+
+<Check>
+  **Enable compression** when using HFDatasetCheckpointManager to reduce disk usage by 50% or more.
+</Check>
+
+<Check>
+  **Use streaming mode** for datasets that don't fit in available RAM.
+</Check>
+
+## Migration
+
+See the [CLI documentation](/api/cli#migrate-checkpoints) for migrating between checkpoint formats.

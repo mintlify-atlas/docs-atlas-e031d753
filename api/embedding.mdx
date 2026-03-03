@@ -1,0 +1,235 @@
+---
+title: "Embedding"
+description: "API reference for text embedding components"
+---
+
+## OpenAIEmbeddingModel
+
+OpenAI-based embedding model for converting text to vector representations.
+
+### Constructor
+
+```python
+OpenAIEmbeddingModel(
+    model_name: str = "text-embedding-3-small",
+    model_batch_size: int = 50,
+    n_concurrent_jobs: int = 5,
+)
+```
+
+<ParamField path="model_name" type="str" default="text-embedding-3-small">
+  OpenAI embedding model to use (e.g., "text-embedding-3-small", "text-embedding-3-large")
+</ParamField>
+
+<ParamField path="model_batch_size" type="int" default="50">
+  Number of texts to embed in each batch
+</ParamField>
+
+<ParamField path="n_concurrent_jobs" type="int" default="5">
+  Maximum number of concurrent API requests
+</ParamField>
+
+### Methods
+
+#### embed()
+
+Embed a list of texts into vector representations.
+
+```python
+async def embed(texts: list[str]) -> list[list[float]]
+```
+
+<ParamField path="texts" type="list[str]" required>
+  List of text strings to embed
+</ParamField>
+
+<ResponseField name="return" type="list[list[float]]">
+  List of embedding vectors (one per input text)
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.embedding import OpenAIEmbeddingModel
+
+model = OpenAIEmbeddingModel(
+    model_name="text-embedding-3-large",
+    model_batch_size=100,
+    n_concurrent_jobs=10
+)
+
+texts = ["Hello world", "Embedding example"]
+embeddings = await model.embed(texts)
+print(f"Generated {len(embeddings)} embeddings")
+```
+
+---
+
+## SentenceTransformerEmbeddingModel
+
+Local embedding model using Sentence Transformers (requires `sentence-transformers` package).
+
+### Constructor
+
+```python
+SentenceTransformerEmbeddingModel(
+    model_name: str = "all-MiniLM-L6-v2",
+    model_batch_size: int = 128,
+    device: str = "cpu",
+)
+```
+
+<ParamField path="model_name" type="str" default="all-MiniLM-L6-v2">
+  Sentence Transformer model name from HuggingFace
+</ParamField>
+
+<ParamField path="model_batch_size" type="int" default="128">
+  Number of texts to embed in each batch
+</ParamField>
+
+<ParamField path="device" type="str" default="cpu">
+  Device to run model on ("cpu", "cuda", "mps")
+</ParamField>
+
+### Methods
+
+#### embed()
+
+Embed a list of texts into vector representations.
+
+```python
+async def embed(texts: list[str]) -> list[list[float]]
+```
+
+<ParamField path="texts" type="list[str]" required>
+  List of text strings to embed
+</ParamField>
+
+<ResponseField name="return" type="list[list[float]]">
+  List of embedding vectors (one per input text)
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.embedding import SentenceTransformerEmbeddingModel
+
+# Use local model (no API calls)
+model = SentenceTransformerEmbeddingModel(
+    model_name="all-MiniLM-L6-v2",
+    device="cuda"  # Use GPU if available
+)
+
+texts = ["Local embedding", "No API needed"]
+embeddings = await model.embed(texts)
+```
+
+---
+
+## CohereEmbeddingModel
+
+Cohere-based embedding model (requires `cohere` package).
+
+### Constructor
+
+```python
+CohereEmbeddingModel(
+    model_name: str = "embed-v4.0",
+    model_batch_size: int = 96,
+    n_concurrent_jobs: int = 5,
+    input_type: str = "clustering",
+    api_key: str | None = None,
+)
+```
+
+<ParamField path="model_name" type="str" default="embed-v4.0">
+  Cohere embedding model to use
+</ParamField>
+
+<ParamField path="model_batch_size" type="int" default="96">
+  Number of texts to embed in each batch
+</ParamField>
+
+<ParamField path="n_concurrent_jobs" type="int" default="5">
+  Maximum number of concurrent API requests
+</ParamField>
+
+<ParamField path="input_type" type="str" default="clustering">
+  Type of input for Cohere ("clustering", "search_document", "search_query")
+</ParamField>
+
+<ParamField path="api_key" type="str | None" default="None">
+  Cohere API key (if None, uses environment variable)
+</ParamField>
+
+### Methods
+
+#### embed()
+
+Embed a list of texts into vector representations.
+
+```python
+async def embed(texts: list[str]) -> list[list[float]]
+```
+
+<ParamField path="texts" type="list[str]" required>
+  List of text strings to embed
+</ParamField>
+
+<ResponseField name="return" type="list[list[float]]">
+  List of embedding vectors (one per input text)
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.embedding import CohereEmbeddingModel
+
+model = CohereEmbeddingModel(
+    model_name="embed-v4.0",
+    input_type="clustering"
+)
+
+texts = ["Cohere embedding", "Alternative provider"]
+embeddings = await model.embed(texts)
+```
+
+---
+
+## embed_summaries()
+
+Embed conversation summaries and return items ready for clustering. This is a utility function that wraps the embedding model to produce the dictionary format expected by clustering methods.
+
+```python
+async def embed_summaries(
+    summaries: list[ConversationSummary],
+    embedding_model: BaseEmbeddingModel
+) -> list[dict[str, Union[ConversationSummary, list[float]]]]
+```
+
+<ParamField path="summaries" type="list[ConversationSummary]" required>
+  List of conversation summaries to embed
+</ParamField>
+
+<ParamField path="embedding_model" type="BaseEmbeddingModel" required>
+  Embedding model to use
+</ParamField>
+
+<ResponseField name="return" type="list[dict[str, Union[ConversationSummary, list[float]]]]">
+  List of dictionaries with "item" (ConversationSummary) and "embedding" (list[float]) keys
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.embedding import embed_summaries, OpenAIEmbeddingModel
+from kura.cluster import KmeansClusteringModel
+
+# Embed summaries
+embedding_model = OpenAIEmbeddingModel()
+embedded_items = await embed_summaries(summaries, embedding_model)
+
+# Use with clustering
+clustering_method = KmeansClusteringModel()
+cluster_mapping = clustering_method.cluster(embedded_items)
+```

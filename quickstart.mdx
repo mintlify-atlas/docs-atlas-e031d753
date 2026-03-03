@@ -1,80 +1,431 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Process your first conversations and discover patterns in 5 minutes
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+This quickstart guides you through analyzing a sample dataset of programming conversations. You'll learn how to:
 
-### Step 1: Set up your local environment
+1. Load conversation data
+2. Run the analysis pipeline
+3. Visualize the results
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+By the end, you'll have a complete working example that you can adapt for your own data.
+
+<Tip>
+This tutorial uses a small public dataset (190 conversations) from HuggingFace. The entire process takes about 2 minutes on a modern laptop.
+</Tip>
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Kura">
+    If you haven't already, install Kura with visualization support:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    uv pip install "kura[visualization]"
+    ```
+  </Step>
+  
+  <Step title="Set up API keys">
+    You'll need an API key from one of these providers:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    <CodeGroup>
+    ```bash OpenAI
+    export OPENAI_API_KEY="your-key-here"
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash Anthropic
+    export ANTHROPIC_API_KEY="your-key-here"
+    ```
+    
+    ```bash Google
+    export GOOGLE_API_KEY="your-key-here"
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Complete example
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Create a file called `analyze.py` with the following code:
 
-### Step 3: Go live
+```python analyze.py
+import asyncio
+from rich.console import Console
+from kura.cache import DiskCacheStrategy
+from kura.summarisation import summarise_conversations, SummaryModel
+from kura.cluster import generate_base_clusters_from_conversation_summaries, ClusterDescriptionModel
+from kura.meta_cluster import reduce_clusters_from_base_clusters, MetaClusterModel
+from kura.dimensionality import reduce_dimensionality_from_clusters, HDBUMAP
+from kura.visualization import visualise_pipeline_results
+from kura.types import Conversation
+from kura.checkpoints import JSONLCheckpointManager
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+
+async def main():
+    console = Console()
+
+    # Define models
+    summary_model = SummaryModel(
+        console=console,
+        cache=DiskCacheStrategy(cache_dir="./.summary"),  # Disk-based caching
+    )
+    cluster_model = ClusterDescriptionModel(console=console)
+    meta_cluster_model = MetaClusterModel(console=console)
+    dimensionality_model = HDBUMAP()
+
+    # Define checkpoints
+    checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+
+    # Load conversations from HuggingFace dataset
+    conversations = Conversation.from_hf_dataset(
+        "ivanleomk/synthetic-gemini-conversations", split="train"
+    )
+
+    # Process through the pipeline step by step
+    summaries = await summarise_conversations(
+        conversations, model=summary_model, checkpoint_manager=checkpoint_manager
+    )
+
+    clusters = await generate_base_clusters_from_conversation_summaries(
+        summaries, model=cluster_model, checkpoint_manager=checkpoint_manager
+    )
+
+    reduced_clusters = await reduce_clusters_from_base_clusters(
+        clusters, model=meta_cluster_model, checkpoint_manager=checkpoint_manager
+    )
+
+    projected_clusters = await reduce_dimensionality_from_clusters(
+        reduced_clusters,
+        model=dimensionality_model,
+        checkpoint_manager=checkpoint_manager,
+    )
+
+    # Visualize results
+    visualise_pipeline_results(projected_clusters, style="rich")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Run the analysis
+
+Execute the script:
+
+```bash
+python analyze.py
+```
+
+You'll see progress output as Kura processes the conversations:
+
+```
+Loading Conversations: 100%|██████████| 190/190 [00:03<00:00, 52.11it/s]
+Summarizing conversations: 100%|██████████| 190/190 [00:12<00:00, 15.83it/s]
+Generating clusters: 100%|██████████| 1/1 [00:03<00:00, 3.21s/it]
+Reducing to meta-clusters: 100%|██████████| 1/1 [00:02<00:00, 2.45s/it]
+Reducing dimensionality: 100%|██████████| 1/1 [00:01<00:00, 1.12s/it]
+```
+
+## Understanding the output
+
+Kura will display a hierarchical visualization of discovered patterns:
+
+```
+📚 All Clusters (190 conversations)
+
+╠══ 🔸 Data Analysis & Visualization
+║   📊 38 conversations (20.0%) [████░░░░░░░░░░░░░░░░]
+║   💭 Python and R programming for statistical analysis
+║
+║   ╠══ 🔸 R Programming
+║   ║   📊 12 conversations (6.3%) [█░░░░░░░░░░░░░░░░░░░]
+║   ║
+║   ╠══ 🔸 Tableau Dashboards
+║   ║   📊 10 conversations (5.3%) [█░░░░░░░░░░░░░░░░░░░]
+║   ║
+║   ╚══ 🔸 Pandas Data Manipulation
+║       📊 16 conversations (8.4%) [██░░░░░░░░░░░░░░░░░░]
+║
+╠══ 🔸 Web Development
+║   📊 45 conversations (23.7%) [█████░░░░░░░░░░░░░░░]
+...
+```
+
+<Note>
+The exact output will vary depending on the dataset and the LLM's clustering decisions.
+</Note>
+
+## What just happened?
+
+Let's break down each step:
+
+<Steps>
+  <Step title="Load conversations">
+    ```python
+    conversations = Conversation.from_hf_dataset(
+        "ivanleomk/synthetic-gemini-conversations", split="train"
+    )
+    ```
+    
+    Loads 190 programming conversations from a HuggingFace dataset. You can also load from:
+    - Claude conversation exports: `Conversation.from_claude_conversation_dump("file.json")`
+    - Custom JSON: `Conversation.from_conversation_dump("file.json")`
+    - Your own format: Create `Conversation` objects manually
+  </Step>
+  
+  <Step title="Summarize conversations">
+    ```python
+    summaries = await summarise_conversations(
+        conversations, model=summary_model, checkpoint_manager=checkpoint_manager
+    )
+    ```
+    
+    Each conversation is condensed into a concise task description using an LLM. Results are cached to disk (`./.summary/`) and checkpointed (`./checkpoints/summaries.jsonl`).
+    
+    <Tip>
+    Run the script again and this step will be nearly instant thanks to caching!
+    </Tip>
+  </Step>
+  
+  <Step title="Generate clusters">
+    ```python
+    clusters = await generate_base_clusters_from_conversation_summaries(
+        summaries, model=cluster_model, checkpoint_manager=checkpoint_manager
+    )
+    ```
+    
+    Similar conversations are grouped together using K-means clustering on embedding vectors. The LLM generates descriptive names for each cluster.
+  </Step>
+  
+  <Step title="Build hierarchy">
+    ```python
+    reduced_clusters = await reduce_clusters_from_base_clusters(
+        clusters, model=meta_cluster_model, checkpoint_manager=checkpoint_manager
+    )
+    ```
+    
+    Clusters are organized into a hierarchical structure (meta-clusters) for easier navigation. This helps you see both high-level patterns and specific sub-patterns.
+  </Step>
+  
+  <Step title="Reduce dimensionality">
+    ```python
+    projected_clusters = await reduce_dimensionality_from_clusters(
+        reduced_clusters,
+        model=dimensionality_model,
+        checkpoint_manager=checkpoint_manager,
+    )
+    ```
+    
+    High-dimensional embeddings are projected to 2D using UMAP and HDBSCAN for visualization (useful for the web UI).
+  </Step>
+</Steps>
+
+## Checkpoints and caching
+
+Kura automatically saves progress at each step:
+
+```
+./checkpoints/
+  ├── summaries.jsonl
+  ├── clusters.jsonl
+  ├── reduced_clusters.jsonl
+  └── projected_clusters.jsonl
+
+./.summary/
+  └── [cache files]
+```
+
+**Benefits:**
+- **Resume from failure**: If the script crashes, it picks up where it left off
+- **Fast iteration**: Change clustering parameters without re-summarizing
+- **Inspect intermediate results**: Load and analyze any checkpoint manually
+
+<Warning>
+Checkpoints are tied to the input data. If you change the conversations, delete the checkpoint directory to regenerate.
+</Warning>
+
+## Visualizing results
+
+Kura offers three visualization styles:
+
+<CodeGroup>
+```python Basic
+visualise_pipeline_results(projected_clusters, style="basic")
+```
+
+```python Enhanced
+visualise_pipeline_results(projected_clusters, style="enhanced")
+```
+
+```python Rich (recommended)
+visualise_pipeline_results(projected_clusters, style="rich")
+```
+</CodeGroup>
+
+**Basic** shows a simple tree structure. **Enhanced** adds statistics and progress bars. **Rich** provides full color formatting and interactive-style output.
+
+## Loading your own data
+
+To analyze your own conversations, create `Conversation` objects:
+
+```python
+from kura.types import Conversation, Message
+from datetime import datetime
+
+conversations = [
+    Conversation(
+        chat_id="conv-1",
+        created_at=datetime.now(),
+        messages=[
+            Message(
+                created_at=datetime.now(),
+                role="user",
+                content="How do I reset my password?"
+            ),
+            Message(
+                created_at=datetime.now(),
+                role="assistant",
+                content="You can reset your password by..."
+            ),
+        ],
+        metadata={
+            "source": "support_chat",
+            "customer_tier": "premium",
+        },
+    ),
+    # Add more conversations...
+]
+```
+
+<Tip>
+The `metadata` field is optional but useful for filtering and analysis. You can include any relevant information like user segments, conversation sources, or custom tags.
+</Tip>
+
+## Customizing the pipeline
+
+### Using a different clustering method
+
+Kura supports multiple clustering algorithms:
+
+```python
+from kura.k_means import MiniBatchKmeansClusteringMethod
+
+minibatch_kmeans = MiniBatchKmeansClusteringMethod(
+    clusters_per_group=10,  # Target items per cluster
+    batch_size=1000,        # Mini-batch size
+    max_iter=100,           # Maximum iterations
+    random_state=42,        # Reproducibility
+)
+
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries,
+    model=cluster_model,
+    clustering_method=minibatch_kmeans,
+    checkpoint_manager=checkpoint_manager,
+)
+```
+
+### Using different checkpoint formats
+
+Kura supports multiple checkpoint formats:
+
+<CodeGroup>
+```python JSONL (default)
+from kura.checkpoints import JSONLCheckpointManager
+checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+```
+
+```python Parquet
+from kura.checkpoints import ParquetCheckpointManager
+checkpoint_manager = ParquetCheckpointManager("./checkpoints", enabled=True)
+```
+
+```python HuggingFace Datasets
+from kura.checkpoints import HFDatasetCheckpointManager
+checkpoint_manager = HFDatasetCheckpointManager("./checkpoints", enabled=True)
+```
+</CodeGroup>
+
+<Note>
+HuggingFace dataset format is recommended for very large datasets (100k+ conversations) due to better compression and lazy loading.
+</Note>
+
+## Web UI
+
+Kura includes a web interface for interactive exploration:
+
+```bash
+kura start-app --dir ./checkpoints
+```
+
+Open http://localhost:8000 in your browser to:
+- Explore clusters visually
+- Drill down into individual conversations
+- Filter by metadata
+- Export insights
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core concepts" icon="book" href="/core-concepts/overview">
+    Learn about the analysis pipeline in depth
+  </Card>
+  
+  <Card title="Checkpoints" icon="floppy-disk" href="/core-concepts/checkpoints">
+    Master checkpoint strategies for large datasets
+  </Card>
+  
+  <Card title="Loading data" icon="database" href="/core-concepts/conversations">
+    Learn all the ways to load conversation data
+  </Card>
+  
+  <Card title="API reference" icon="code" href="/api/summarisation">
+    Explore the complete API documentation
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Troubleshooting
+
+### Out of memory errors
+
+For large datasets, use mini-batch clustering and HuggingFace checkpoints:
+
+```python
+from kura.k_means import MiniBatchKmeansClusteringMethod
+from kura.checkpoints import HFDatasetCheckpointManager
+
+clustering_method = MiniBatchKmeansClusteringMethod(
+    clusters_per_group=10,
+    batch_size=1000,
+)
+checkpoint_manager = HFDatasetCheckpointManager("./checkpoints", enabled=True)
+```
+
+### Rate limit errors
+
+Reduce concurrent requests:
+
+```python
+summary_model = SummaryModel(
+    console=console,
+    max_concurrent_requests=5,  # Default is 100
+)
+```
+
+### Poor clustering quality
+
+Try adjusting the number of clusters:
+
+```python
+meta_cluster_model = MetaClusterModel(
+    console=console,
+    max_clusters=15,  # Default is 10
+)
+```
+
+<Tip>
+For more troubleshooting tips, see the [GitHub Issues](https://github.com/567-labs/kura/issues) or open a new one.
+</Tip>

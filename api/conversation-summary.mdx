@@ -1,0 +1,146 @@
+---
+title: ConversationSummary
+description: Generated summary with metadata and embeddings for a conversation
+---
+
+## ConversationSummary
+
+Extends `GeneratedSummary` with conversation-specific fields for tracking and retrieval.
+
+<ResponseField name="chat_id" type="str" required>
+  Unique identifier linking to the original conversation
+</ResponseField>
+
+<ResponseField name="metadata" type="dict" required>
+  Metadata from the original conversation
+</ResponseField>
+
+<ResponseField name="embedding" type="Optional[list[float]]">
+  Vector embedding of the summary for similarity search. Defaults to None
+</ResponseField>
+
+<ResponseField name="summary" type="str" required>
+  <Expandable title="Inherited from GeneratedSummary">
+    A clear and concise summary of the conversation in at most two sentences, avoiding phrases like 'Based on the conversation' and excluding proper nouns or PII
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="request" type="Optional[str]">
+  <Expandable title="Inherited from GeneratedSummary">
+    The user's overall request for the assistant
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="topic" type="Optional[str]">
+  <Expandable title="Inherited from GeneratedSummary">
+    The main high-level topic of the conversation (e.g., 'software development', 'creative writing', 'scientific research')
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="languages" type="Optional[list[str]]">
+  <Expandable title="Inherited from GeneratedSummary">
+    Main languages present in the conversation including human and programming languages (e.g., ['english', 'arabic', 'python', 'javascript'])
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="task" type="Optional[str]">
+  <Expandable title="Inherited from GeneratedSummary">
+    The task the model is being asked to perform
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="concerning_score" type="Optional[int]">
+  <Expandable title="Inherited from GeneratedSummary">
+    Safety concern rating from 1-5 scale. Constrained to values between 1 and 5 (ge=1, le=5)
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="user_frustration" type="Optional[int]">
+  <Expandable title="Inherited from GeneratedSummary">
+    User frustration rating from 1-5 scale. Constrained to values between 1 and 5 (ge=1, le=5)
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="assistant_errors" type="Optional[list[str]]">
+  <Expandable title="Inherited from GeneratedSummary">
+    List of errors the assistant made
+  </Expandable>
+</ResponseField>
+
+## GeneratedSummary
+
+Base class containing all LLM-generated summary fields.
+
+<ResponseField name="summary" type="str" required>
+  A clear and concise summary of the conversation in at most two sentences, avoiding phrases like 'Based on the conversation' and excluding proper nouns or PII
+</ResponseField>
+
+<ResponseField name="request" type="Optional[str]">
+  The user's overall request for the assistant
+</ResponseField>
+
+<ResponseField name="topic" type="Optional[str]">
+  The main high-level topic of the conversation (e.g., 'software development', 'creative writing', 'scientific research')
+</ResponseField>
+
+<ResponseField name="languages" type="Optional[list[str]]">
+  Main languages present in the conversation including human and programming languages (e.g., ['english', 'arabic', 'python', 'javascript'])
+</ResponseField>
+
+<ResponseField name="task" type="Optional[str]">
+  The task the model is being asked to perform
+</ResponseField>
+
+<ResponseField name="concerning_score" type="Optional[int]">
+  Safety concern rating from 1-5 scale. Constrained to values between 1 and 5 (ge=1, le=5)
+</ResponseField>
+
+<ResponseField name="user_frustration" type="Optional[int]">
+  User frustration rating from 1-5 scale. Constrained to values between 1 and 5 (ge=1, le=5)
+</ResponseField>
+
+<ResponseField name="assistant_errors" type="Optional[list[str]]">
+  List of errors the assistant made
+</ResponseField>
+
+### Example
+
+```python
+from kura.types import ConversationSummary
+
+summary = ConversationSummary(
+    chat_id="chat-123",
+    summary="User asked for help with Python async code. Assistant provided examples and explained event loops.",
+    request="Help understanding Python asyncio",
+    topic="software development",
+    languages=["english", "python"],
+    task="code explanation",
+    concerning_score=1,
+    user_frustration=2,
+    assistant_errors=[],
+    metadata={
+        "model": "claude-3-sonnet",
+        "token_count": 450
+    },
+    embedding=[0.1, 0.2, 0.3, ...]  # 1536-dimensional vector
+)
+```
+
+### String Representation
+
+The `ConversationSummary` class implements a custom `__repr__()` method that formats the summary as XML tags:
+
+```python
+print(summary)
+# Output:
+# <summary>User asked for help with Python async code...</summary>
+# <topic>software development</topic>
+# <request>Help understanding Python asyncio</request>
+# <task>code explanation</task>
+# <languages>['english', 'python']</languages>
+# <assistant_errors>[]</assistant_errors>
+# <model>claude-3-sonnet</model>
+# <token_count>450</token_count>
+```
+
+Metadata fields are included in the output with type checking for str, int, float, bool, and lists of these types.

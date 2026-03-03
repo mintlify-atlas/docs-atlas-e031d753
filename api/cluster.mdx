@@ -1,0 +1,140 @@
+---
+title: Cluster & GeneratedCluster
+description: Types for representing conversation clusters and their hierarchical structure
+---
+
+## Cluster
+
+Represents a cluster of related conversations with metadata and hierarchy information.
+
+<ResponseField name="id" type="str" required>
+  Unique identifier for the cluster. Auto-generated using `uuid.uuid4().hex` if not provided
+</ResponseField>
+
+<ResponseField name="name" type="str" required>
+  Short, imperative sentence describing the cluster (at most ten words)
+</ResponseField>
+
+<ResponseField name="description" type="str" required>
+  Detailed description of what conversations in this cluster are about
+</ResponseField>
+
+<ResponseField name="slug" type="str" required>
+  Three-word snake_case summary of the cluster topic (e.g., "code_debugging_help")
+</ResponseField>
+
+<ResponseField name="chat_ids" type="list[str]" required>
+  List of conversation IDs belonging to this cluster
+</ResponseField>
+
+<ResponseField name="parent_id" type="Union[str, None]" required>
+  ID of the parent cluster in the hierarchy, or None for top-level clusters
+</ResponseField>
+
+### Computed Fields
+
+<ResponseField name="count" type="int" computed>
+  Number of conversations in this cluster. Computed from `len(chat_ids)`
+</ResponseField>
+
+### Methods
+
+#### \_\_str\_\_()
+
+Returns a formatted string representation of the cluster.
+
+```python
+def __str__(self) -> str:
+    return f"Name: {self.name}\nDescription: {self.description}"
+```
+
+### Example
+
+```python
+from kura.types import Cluster
+
+cluster = Cluster(
+    id="abc123",
+    name="Debug Python exceptions",
+    description="Users asking for help understanding and fixing Python exceptions like TypeError and ValueError.",
+    slug="python_exception_debugging",
+    chat_ids=["chat-1", "chat-2", "chat-3"],
+    parent_id="parent-cluster-xyz"
+)
+
+print(cluster.count)  # 3
+print(cluster)
+# Name: Debug Python exceptions
+# Description: Users asking for help understanding and fixing Python exceptions...
+```
+
+## GeneratedCluster
+
+LLM-generated cluster metadata without IDs or relationships. Used during cluster generation.
+
+<ResponseField name="name" type="str" required>
+  A short, imperative sentence (at most ten words) that captures the user's request and distinguishes this cluster from others. Should be specific but reflective of most statements in the group. Examples: 'Brainstorm ideas for a birthday party' or 'Generate blog spam for gambling websites'
+</ResponseField>
+
+<ResponseField name="summary" type="str" required>
+  A clear, precise, two-sentence description in past tense that captures the essence of the clustered statements and distinguishes them from contrastive examples. Should be specific to this group without including PII or proper nouns
+</ResponseField>
+
+<ResponseField name="slug" type="str" required>
+  A three-word snake_case summary of what this cluster is about. Examples: 'birthday_party_planning', 'gambling_content_generation', 'code_debugging_help'
+</ResponseField>
+
+### Example
+
+```python
+from kura.types import GeneratedCluster
+
+generated = GeneratedCluster(
+    name="Explain React hooks usage",
+    summary="Users requested explanations of React hooks like useState and useEffect. They wanted practical examples and best practices for state management.",
+    slug="react_hooks_explanation"
+)
+```
+
+## ClusterTreeNode
+
+Represents a node in the cluster hierarchy tree for visualization.
+
+<ResponseField name="id" type="str" required>
+  Unique identifier for the cluster
+</ResponseField>
+
+<ResponseField name="name" type="str" required>
+  Cluster name
+</ResponseField>
+
+<ResponseField name="description" type="str" required>
+  Cluster description
+</ResponseField>
+
+<ResponseField name="slug" type="str" required>
+  Three-word snake_case summary
+</ResponseField>
+
+<ResponseField name="count" type="int" required>
+  Number of conversations in the cluster
+</ResponseField>
+
+<ResponseField name="children" type="list[str]" required>
+  List of child cluster IDs in the hierarchy
+</ResponseField>
+
+### Example
+
+```python
+from kura.types import ClusterTreeNode
+
+node = ClusterTreeNode(
+    id="cluster-abc",
+    name="Programming help",
+    description="Users seeking programming assistance",
+    slug="programming_assistance",
+    count=150,
+    children=["cluster-xyz", "cluster-def"]
+)
+```

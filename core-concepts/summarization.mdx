@@ -1,0 +1,379 @@
+---
+title: Conversation Summarization
+description: How Kura uses LLMs to extract insights from conversations
+---
+
+## Overview
+
+Summarization is the first analysis stage in Kura's pipeline. Each conversation is processed by an LLM to extract structured information using the CLIO (Conversation-Level Insight and Observation) framework.
+
+This transforms raw conversations into `ConversationSummary` objects that can be embedded and clustered.
+
+## The ConversationSummary Model
+
+The output of summarization includes:
+
+```python
+class ConversationSummary(BaseModel):
+    chat_id: str
+    summary: str | None  # 1-2 sentence description
+    request: str | None  # User's overall request
+    topic: str | None  # Deprecated field
+    languages: list[str] | None  # Human and programming languages
+    task: str | None  # Task being performed
+    concerning_score: int | None  # Safety score (1-5)
+    user_frustration: int | None  # Frustration level (1-5)
+    assistant_errors: list[str] | None  # List of assistant mistakes
+    metadata: dict  # Original metadata + custom fields
+```
+
+## Basic Usage
+
+### Simple Summarization
+
+```python
+from kura.summarisation import summarise_conversations, SummaryModel
+
+model = SummaryModel(
+    model="openai/gpt-4o-mini",
+    max_concurrent_requests=50
+)
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model
+)
+
+print(summaries[0].summary)
+# Output: "User asks for help debugging a Python pandas DataFrame indexing error"
+```
+
+### With Checkpointing
+
+```python
+from kura.checkpoints import JSONLCheckpointManager
+
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# On subsequent runs, summaries are loaded from checkpoint
+# without re-calling the LLM
+```
+
+## SummaryModel Configuration
+
+Located in `kura/summarisation.py:133-184`:
+
+```python
+class SummaryModel(BaseSummaryModel):
+    def __init__(
+        self,
+        model: Union[str, "KnownModelName"] = "openai/gpt-4o-mini",
+        max_concurrent_requests: int = 50,
+        checkpoint_filename: str = "summaries",
+        console: Optional[Console] = None,
+        cache: Optional[CacheStrategy] = None,
+    )
+```
+
+### Parameters
+
+- **model**: LLM identifier (e.g., "openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet")
+- **max_concurrent_requests**: Number of parallel API calls (controls rate limiting)
+- **checkpoint_filename**: Name for checkpoint file (default: "summaries")
+- **console**: Rich Console for progress display (optional)
+- **cache**: Disk cache strategy to avoid re-processing conversations (optional)
+
+<Tip>
+Set `max_concurrent_requests` based on your API rate limits. OpenAI typically allows 3,500 RPM for GPT-4o-mini.
+</Tip>
+
+## The CLIO Framework
+
+Kura uses the CLIO prompt (defined in `kura/summarisation.py:22-74`) to extract:
+
+### 1. Summary
+A 1-2 sentence description focusing on what the user wanted:
+
+```
+"User requests assistance creating a React component for a dropdown menu with custom styling"
+```
+
+### 2. Request
+The user's overall goal, starting with "The user's overall request for the assistant is to":
+
+```
+"The user's overall request for the assistant is to help build a reusable dropdown component in React"
+```
+
+### 3. Languages
+Both human and programming languages (lowercase):
+
+```python
+["english", "react", "javascript", "css"]
+```
+
+### 4. Task
+What the model is being asked to do, starting with "The task is to":
+
+```
+"The task is to generate code for a React component with styling"
+```
+
+### 5. Concerning Score (1-5)
+Safety assessment:
+
+- 1: Completely benign
+- 2: Slightly concerning
+- 3: Moderately concerning
+- 4: Very concerning
+- 5: Extremely concerning (immediate review needed)
+
+### 6. User Frustration (1-5)
+User satisfaction:
+
+- 1: Happy with the assistant
+- 2: Slightly frustrated
+- 3: Moderately frustrated
+- 4: Very frustrated
+- 5: Extremely frustrated
+
+### 7. Assistant Errors
+Specific mistakes made by the assistant:
+
+```python
+[
+    "Provided incomplete code example",
+    "Failed to address styling requirements",
+    "Ignored user's preference for functional components"
+]
+```
+
+## Custom Prompts
+
+Modify the CLIO prompt for your use case:
+
+```python
+custom_prompt = """
+Analyze this technical support conversation and extract:
+1. The user's technical problem
+2. Steps taken to resolve it
+3. Whether the issue was resolved
+4. Customer satisfaction level (1-5)
+
+Conversation:
+{% for message in conversation.messages %}
+{{ message.role }}: {{ message.content }}
+{% endfor %}
+"""
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model,
+    prompt=custom_prompt
+)
+```
+
+## Custom Schema Extensions
+
+Extend `GeneratedSummary` to add custom fields:
+
+```python
+from kura.types.summarisation import GeneratedSummary
+
+class DetailedSummary(GeneratedSummary):
+    sentiment: str  # "positive", "negative", "neutral"
+    technical_complexity: int  # 1-10 scale
+    product_area: str  # Which product feature was discussed
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model,
+    response_schema=DetailedSummary
+)
+
+# Custom fields are available in metadata
+print(summaries[0].metadata["sentiment"])  # "positive"
+print(summaries[0].metadata["technical_complexity"])  # 7
+```
+
+<Note>
+Custom fields are automatically extracted from your schema and placed in the `metadata` dictionary. Core CLIO fields remain as top-level attributes.
+</Note>
+
+## Caching for Efficiency
+
+Use disk caching to avoid re-analyzing the same conversations:
+
+```python
+from kura.cache import DiskCache
+
+cache = DiskCache(
+    cache_dir="./cache",
+    ttl=86400 * 7  # 7 days
+)
+
+model = SummaryModel(
+    model="openai/gpt-4o-mini",
+    cache=cache
+)
+
+# First run: Calls LLM for all conversations
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model
+)
+
+# Second run: Loads from cache instantly
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model
+)
+```
+
+Caching is based on:
+- Message content (role + content pairs)
+- Response schema
+- Prompt (MD5 hash)
+- Temperature
+- Model identifier
+
+## Rich Console Progress
+
+Display real-time progress with summaries:
+
+```python
+from rich.console import Console
+
+console = Console()
+
+model = SummaryModel(
+    model="openai/gpt-4o-mini",
+    console=console
+)
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model
+)
+```
+
+This shows:
+- Progress bar with ETA
+- Latest 3 summaries as they're generated
+- Concerning score and frustration level for each
+
+## Alternative: Usage Analysis Prompt
+
+Kura includes an alternative prompt focused on usage patterns (`kura/summarisation.py:77-130`):
+
+```python
+from kura.summarisation import USAGE_ANALYSIS_PROMPT
+
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=model,
+    prompt=USAGE_ANALYSIS_PROMPT
+)
+```
+
+This prompt focuses on:
+- How the system is being used
+- User expertise level
+- System success/failure patterns
+- Systemic issues vs. individual mistakes
+
+## Implementation Details
+
+### Single Conversation Processing
+
+From `kura/summarisation.py:299-397`, the `_summarise_single_conversation` method:
+
+1. Checks cache for existing summary
+2. Makes LLM API call with Instructor for structured output
+3. Maps response fields to ConversationSummary
+4. Stores custom fields in metadata
+5. Caches result for future runs
+
+### Concurrency Control
+
+Uses `asyncio.Semaphore` to limit concurrent requests:
+
+```python
+# From kura/summarisation.py:257
+self.semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+# From kura/summarisation.py:332
+async with self.semaphore:
+    resp = await client.chat.completions.create(...)
+```
+
+## Best Practices
+
+### Choose the Right Model
+
+- **gpt-4o-mini**: Fast and cost-effective for most use cases
+- **claude-3-5-sonnet**: Higher quality analysis, better context handling
+- **gemini-2.0-flash**: Fast and free (rate limits apply)
+
+### Optimize Costs
+
+```python
+# Use checkpointing to avoid re-analysis
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+# Use caching for duplicate conversations
+cache = DiskCache("./cache")
+
+# Process in batches for large datasets
+for batch in batched(conversations, 1000):
+    summaries = await summarise_conversations(
+        conversations=batch,
+        model=model,
+        checkpoint_manager=checkpoint_mgr
+    )
+```
+
+### Handle Rate Limits
+
+```python
+# Adjust concurrency based on provider
+model = SummaryModel(
+    model="openai/gpt-4o-mini",
+    max_concurrent_requests=50  # OpenAI: 3,500 RPM
+)
+
+model = SummaryModel(
+    model="anthropic/claude-3-5-sonnet",
+    max_concurrent_requests=5  # Anthropic: lower default limits
+)
+```
+
+## Common Issues
+
+<Accordion title="Empty summaries or None values">
+Some conversations may be too short or lack substance. Filter these out:
+
+```python
+summaries = [s for s in summaries if s.summary]
+```
+</Accordion>
+
+<Accordion title="Rate limit errors">
+Reduce `max_concurrent_requests` or add retry logic with exponential backoff (built into the implementation with `tenacity`).
+</Accordion>
+
+<Accordion title="PII in summaries">
+The CLIO prompt instructs the LLM to omit PII, but verify this with spot checks. Consider post-processing with a PII detection tool.
+</Accordion>
+
+## Next Steps
+
+<Card title="Embedding" icon="vector-square" href="/core-concepts/embedding">
+  Convert summaries to vector embeddings for clustering
+</Card>

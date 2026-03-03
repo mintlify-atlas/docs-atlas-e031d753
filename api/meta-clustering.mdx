@@ -1,0 +1,205 @@
+---
+title: "Meta-Clustering"
+description: "API reference for hierarchical meta-clustering components"
+---
+
+## MetaClusterModel
+
+Model for reducing clusters into a hierarchical structure by iteratively combining similar clusters.
+
+### Constructor
+
+```python
+MetaClusterModel(
+    max_concurrent_requests: int = 50,
+    model: str = "openai/gpt-4o-mini",
+    embedding_model: Optional[BaseEmbeddingModel] = None,
+    clustering_model: Union[BaseClusteringMethod, None] = None,
+    max_clusters: int = 10,
+    console: Optional["Console"] = None,
+    **kwargs,
+)
+```
+
+<ParamField path="max_concurrent_requests" type="int" default="50">
+  Maximum concurrent API requests
+</ParamField>
+
+<ParamField path="model" type="str" default="openai/gpt-4o-mini">
+  Model identifier for LLM calls
+</ParamField>
+
+<ParamField path="embedding_model" type="Optional[BaseEmbeddingModel]" default="None">
+  Embedding model to use (defaults to OpenAIEmbeddingModel)
+</ParamField>
+
+<ParamField path="clustering_model" type="Union[BaseClusteringMethod, None]" default="None">
+  Clustering method to use (defaults to KmeansClusteringModel with 12 items per cluster)
+</ParamField>
+
+<ParamField path="max_clusters" type="int" default="10">
+  Target number of root clusters in final hierarchy
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich console for progress tracking
+</ParamField>
+
+### Methods
+
+#### reduce_clusters()
+
+Takes a list of existing clusters and generates higher-order clusters that are more general. This represents a single iteration of the meta clustering process.
+
+```python
+async def reduce_clusters(clusters: list[Cluster]) -> list[Cluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of clusters to reduce into higher-level groupings
+</ParamField>
+
+<ResponseField name="return" type="list[Cluster]">
+  List of clusters including both new meta-clusters (parent_id=None) and updated original clusters (with parent_id set)
+</ResponseField>
+
+**Note:** In the event of a single cluster, returns a new higher level cluster with the same name as the original cluster.
+
+#### generate_meta_clusters()
+
+Generates meta-clusters from a group of clusters by creating candidate labels and organizing them hierarchically.
+
+```python
+async def generate_meta_clusters(
+    clusters: list[Cluster],
+    show_preview: bool = True
+) -> list[Cluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of clusters to organize into meta-clusters
+</ParamField>
+
+<ParamField path="show_preview" type="bool" default="True">
+  Whether to show live preview of generated meta-clusters
+</ParamField>
+
+<ResponseField name="return" type="list[Cluster]">
+  List of clusters including meta-clusters and their children
+</ResponseField>
+
+#### generate_candidate_clusters()
+
+Generate higher-level cluster names based on a given list of clusters.
+
+```python
+async def generate_candidate_clusters(
+    clusters: list[Cluster],
+    sem: Semaphore
+) -> list[str]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of clusters to analyze for creating candidate labels
+</ParamField>
+
+<ParamField path="sem" type="Semaphore" required>
+  Asyncio semaphore for rate limiting
+</ParamField>
+
+<ResponseField name="return" type="list[str]">
+  List of candidate cluster names that could encompass multiple sub-clusters
+</ResponseField>
+
+#### label_cluster()
+
+Categorize a specific cluster into one of the provided higher-level clusters.
+
+```python
+async def label_cluster(
+    cluster: Cluster,
+    candidate_clusters: list[str]
+)
+```
+
+<ParamField path="cluster" type="Cluster" required>
+  Cluster to categorize
+</ParamField>
+
+<ParamField path="candidate_clusters" type="list[str]" required>
+  List of valid higher-level cluster names to choose from
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  Dictionary with keys "cluster" (original Cluster object) and "label" (selected higher-level cluster name)
+</ResponseField>
+
+#### rename_cluster_group()
+
+Summarize a group of related clusters into a new meta-cluster with a unified name and description.
+
+```python
+async def rename_cluster_group(clusters: list[Cluster]) -> list[Cluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of related clusters to summarize
+</ParamField>
+
+<ResponseField name="return" type="list[Cluster]">
+  List containing the new meta-cluster (first item, parent_id=None) followed by updated original clusters (with parent_id set to the new meta-cluster's ID)
+</ResponseField>
+
+---
+
+## reduce_clusters_from_base_clusters()
+
+Reduce clusters into a hierarchical structure. Iteratively combines similar clusters until the number of root clusters is less than or equal to the model's max_clusters setting.
+
+```python
+async def reduce_clusters_from_base_clusters(
+    clusters: list[Cluster],
+    *,
+    model: BaseMetaClusterModel,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+) -> list[Cluster]
+```
+
+<ParamField path="clusters" type="list[Cluster]" required>
+  List of initial clusters to reduce
+</ParamField>
+
+<ParamField path="model" type="BaseMetaClusterModel" required>
+  Meta-clustering model to use for reduction
+</ParamField>
+
+<ParamField path="checkpoint_manager" type="Optional[BaseCheckpointManager]" default="None">
+  Optional checkpoint manager for caching
+</ParamField>
+
+<ResponseField name="return" type="list[Cluster]">
+  List of clusters with hierarchical structure (includes both root and child clusters)
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.meta_cluster import (
+    MetaClusterModel,
+    reduce_clusters_from_base_clusters
+)
+
+# Create meta-clustering model with target of 5 root clusters
+meta_model = MetaClusterModel(max_clusters=5)
+
+# Reduce base clusters into hierarchy
+reduced = await reduce_clusters_from_base_clusters(
+    clusters=base_clusters,
+    model=meta_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Get only root clusters
+root_clusters = [c for c in reduced if c.parent_id is None]
+print(f"Reduced to {len(root_clusters)} root clusters")
+```

@@ -1,0 +1,426 @@
+---
+title: Base Clustering
+description: Grouping conversation summaries with K-means and LLM-generated descriptions
+---
+
+## Overview
+
+Base clustering groups conversation summaries into thematic clusters based on their embeddings. Each cluster receives an LLM-generated name and description that captures what the conversations have in common.
+
+This is the first level of organization before meta-clustering creates hierarchies.
+
+## The Clustering Pipeline
+
+From `kura/cluster.py:444-509`, the main function:
+
+```python
+async def generate_base_clusters_from_conversation_summaries(
+    summaries: List[ConversationSummary],
+    embedding_model: Optional[BaseEmbeddingModel] = None,
+    clustering_method: Optional[BaseClusteringMethod] = None,
+    clustering_model: Optional[BaseClusterDescriptionModel] = None,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+    max_contrastive_examples: int = 10,
+    prompt: str = DEFAULT_CLUSTER_PROMPT,
+    **kwargs,
+) -> List[Cluster]
+```
+
+### Steps
+
+1. **Embed summaries** → Convert text to vectors
+2. **Cluster embeddings** → Group similar vectors (K-means/HDBSCAN)
+3. **Generate descriptions** → LLM analyzes each cluster with contrastive examples
+
+## K-means Clustering
+
+The default clustering algorithm (`kura/cluster.py:325-395`):
+
+```python
+from kura.cluster import KmeansClusteringModel
+
+clustering_method = KmeansClusteringModel(
+    clusters_per_group=10  # Target size for each cluster
+)
+```
+
+### How It Works
+
+```python
+def cluster(self, items: list[dict]) -> dict[int, list[ConversationSummary]]:
+    embeddings = [item["embedding"] for item in items]
+    data = [item["item"] for item in items]
+    
+    # Calculate number of clusters: ceil(total_items / target_size)
+    n_clusters = math.ceil(len(data) / self.clusters_per_group)
+    
+    # K-means clustering
+    kmeans = KMeans(n_clusters=n_clusters)
+    cluster_labels = kmeans.fit_predict(embeddings)
+    
+    # Group items by cluster
+    return {
+        i: [data[j] for j in range(len(data)) if cluster_labels[j] == i]
+        for i in range(n_clusters)
+    }
+```
+
+### Parameters
+
+- **clusters_per_group** (int): Target number of conversations per cluster
+  - Default: 10
+  - Smaller = more granular clusters
+  - Larger = broader clusters
+
+<Tip>
+For 1,000 conversations with `clusters_per_group=10`, you'll get ~100 clusters. For 10,000 conversations, you'll get ~1,000 clusters.
+</Tip>
+
+## LLM-Generated Cluster Descriptions
+
+After clustering, each group is sent to an LLM for naming and description.
+
+### ClusterDescriptionModel
+
+From `kura/cluster.py:71-148`:
+
+```python
+from kura.cluster import ClusterDescriptionModel
+
+clustering_model = ClusterDescriptionModel(
+    model="openai/gpt-4o-mini",
+    max_concurrent_requests=50,
+    temperature=0.2,
+    console=console  # Optional Rich console
+)
+```
+
+### Parameters
+
+- **model** (str): LLM identifier (default: "openai/gpt-4o-mini")
+- **max_concurrent_requests** (int): Parallel API calls (default: 50)
+- **temperature** (float): LLM temperature for generation (default: 0.2)
+- **checkpoint_filename** (str): Checkpoint name (default: "clusters")
+- **console** (Console | None): Rich console for progress display
+
+### The Cluster Prompt
+
+From `kura/cluster.py:30-63`, the default prompt instructs the LLM to:
+
+1. Analyze positive examples (conversations in the cluster)
+2. Compare with contrastive examples (conversations from other clusters)
+3. Generate:
+   - **2-sentence summary** in past tense
+   - **Short name** (max 10 words) in imperative form
+
+<Accordion title="Example Cluster Prompt (abbreviated)">
+```
+You are tasked with summarizing a group of related statements into a short, 
+precise, and accurate description and name.
+
+Summarize all the statements into a clear, precise, two-sentence description 
+in the past tense. Your summary should be specific to this group and distinguish 
+it from the contrastive answers of the other groups.
+
+Generate a short name for the group of statements. This name should be at most 
+ten words long and be specific but also reflective of most of the statements.
+
+The cluster name should be a sentence in the imperative that captures the user's 
+request. For example, 'Brainstorm ideas for a birthday party' or 'Help me find 
+a new job.'
+
+Below are the related statements:
+<positive_examples>
+{% for item in positive_examples %}{{ item }}
+{% endfor %}
+</positive_examples>
+
+For context, here are statements from nearby groups:
+<contrastive_examples>
+{% for item in contrastive_examples %}{{ item }}
+{% endfor %}
+</contrastive_examples>
+```
+</Accordion>
+
+### Contrastive Examples
+
+The LLM receives examples from OTHER clusters to help it be specific:
+
+```python
+def get_contrastive_examples(
+    cluster_id: int,
+    cluster_id_to_summaries: Dict[int, List[ConversationSummary]],
+    max_contrastive_examples: int = 10,
+) -> List[ConversationSummary]:
+    # Sample up to 10 examples from other clusters
+    other_clusters = [c for c in cluster_id_to_summaries.keys() if c != cluster_id]
+    all_examples = []
+    for cluster in other_clusters:
+        all_examples.extend(cluster_id_to_summaries[cluster])
+    
+    return np.random.choice(all_examples, size=max_contrastive_examples, replace=False)
+```
+
+This helps the LLM generate names like:
+- "Debug Python pandas DataFrame indexing errors" (specific)
+
+Instead of:
+- "Help with programming" (too vague)
+
+## The Cluster Model
+
+The output of clustering is a `Cluster` object:
+
+```python
+class Cluster(BaseModel):
+    id: str  # UUID
+    name: str  # LLM-generated imperative name
+    description: str  # 2-sentence summary
+    slug: str  # URL-safe version of name
+    chat_ids: list[str]  # Conversations in this cluster
+    parent_id: str | None  # Parent cluster (None for root clusters)
+    count: int  # Computed: len(chat_ids)
+```
+
+### Example Cluster
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Debug Python pandas DataFrame column selection and filtering",
+  "description": "Users encountered issues selecting columns and filtering rows in pandas DataFrames, often due to incorrect indexing syntax or misunderstanding of boolean indexing. The assistant provided explanations of .loc, .iloc, and bracket notation, with code examples demonstrating proper usage.",
+  "slug": "debug-python-pandas-dataframe-column-selection-and-filtering",
+  "chat_ids": ["conv_001", "conv_045", "conv_102", ...],
+  "parent_id": null,
+  "count": 12
+}
+```
+
+## Complete Example
+
+```python
+from kura.cluster import (
+    generate_base_clusters_from_conversation_summaries,
+    KmeansClusteringModel,
+    ClusterDescriptionModel
+)
+from kura.embedding import OpenAIEmbeddingModel
+from kura.checkpoints import JSONLCheckpointManager
+
+# Configure components
+embedding_model = OpenAIEmbeddingModel(
+    model_name="text-embedding-3-small",
+    model_batch_size=100
+)
+
+clustering_method = KmeansClusteringModel(
+    clusters_per_group=15  # ~67 clusters for 1000 conversations
+)
+
+clustering_model = ClusterDescriptionModel(
+    model="openai/gpt-4o-mini",
+    max_concurrent_requests=50
+)
+
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+# Generate clusters
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    embedding_model=embedding_model,
+    clustering_method=clustering_method,
+    clustering_model=clustering_model,
+    checkpoint_manager=checkpoint_mgr,
+    max_contrastive_examples=10
+)
+
+print(f"Generated {len(clusters)} clusters")
+for cluster in clusters[:3]:
+    print(f"\n{cluster.name}")
+    print(f"  Conversations: {cluster.count}")
+    print(f"  {cluster.description[:100]}...")
+```
+
+## Custom Clustering Prompt
+
+Tailor the prompt for your domain:
+
+```python
+custom_prompt = """
+You are analyzing customer support conversations. Create a cluster name and 
+description that helps support teams quickly understand the issue type.
+
+Focus on:
+1. The specific product feature or area
+2. The type of problem (bug, how-to, feature request)
+3. Common user pain points
+
+Conversations in this cluster:
+<positive_examples>
+{% for item in positive_examples %}{{ item }}
+{% endfor %}
+</positive_examples>
+
+Conversations from other clusters:
+<contrastive_examples>
+{% for item in contrastive_examples %}{{ item }}
+{% endfor %}
+</contrastive_examples>
+
+Generate:
+1. A 2-sentence description focusing on the problem pattern
+2. A short name like "Billing: Failed payment method updates"
+"""
+
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    prompt=custom_prompt,
+    ...
+)
+```
+
+## Rich Console Progress
+
+Visualize cluster generation in real-time:
+
+```python
+from rich.console import Console
+
+console = Console()
+
+clustering_model = ClusterDescriptionModel(
+    model="openai/gpt-4o-mini",
+    console=console
+)
+
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    clustering_model=clustering_model,
+    ...
+)
+```
+
+Displays:
+- Progress bar with ETA
+- Latest 3 cluster names and descriptions
+- Conversation counts
+
+## Performance Considerations
+
+### Cluster Size
+
+```python
+# More clusters = more granular, but more LLM calls
+clustering_method = KmeansClusteringModel(clusters_per_group=5)  # 200 clusters for 1000 conversations
+
+# Fewer clusters = faster, but less specific
+clustering_method = KmeansClusteringModel(clusters_per_group=50)  # 20 clusters for 1000 conversations
+```
+
+### LLM Costs
+
+- Each cluster requires 1 LLM call (~1,000 tokens with examples)
+- 100 clusters ≈ $0.015 with gpt-4o-mini
+- Use checkpointing to avoid regenerating clusters
+
+### Checkpointing
+
+```python
+# First run: generates clusters
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Second run: loads from checkpoint instantly
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    checkpoint_manager=checkpoint_mgr
+)
+```
+
+## Cluster Quality Tips
+
+### 1. Use Good Summaries
+
+Cluster quality depends on summary quality. Use higher-quality LLMs for summarization:
+
+```python
+summary_model = SummaryModel(model="openai/gpt-4o")  # Better than gpt-4o-mini
+```
+
+### 2. Tune Cluster Size
+
+Experiment with `clusters_per_group`:
+
+```python
+# Test on a subset first
+test_clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries[:100],
+    clustering_method=KmeansClusteringModel(clusters_per_group=5)
+)
+
+# Review cluster quality
+for cluster in test_clusters:
+    print(cluster.name)
+```
+
+### 3. Use Contrastive Examples
+
+More contrastive examples = more specific cluster names:
+
+```python
+clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries=summaries,
+    max_contrastive_examples=20  # Default is 10
+)
+```
+
+### 4. Higher LLM Temperature
+
+For more creative cluster names:
+
+```python
+clustering_model = ClusterDescriptionModel(
+    model="openai/gpt-4o-mini",
+    temperature=0.5  # Default is 0.2
+)
+```
+
+## Alternative: HDBSCAN Clustering
+
+<Note>
+Kura supports HDBSCAN through the `BaseClusteringMethod` interface, but K-means is the default. See `kura/hdbscan.py` for implementation.
+</Note>
+
+HDBSCAN finds natural density-based clusters:
+
+```python
+from kura.hdbscan import HDBSCANClusteringModel
+
+clustering_method = HDBSCANClusteringModel(
+    min_cluster_size=15,  # Minimum conversations per cluster
+    min_samples=5  # Density threshold
+)
+```
+
+Advantages:
+- Finds natural groupings
+- Handles noise (outliers)
+- No need to specify number of clusters
+
+Disadvantages:
+- More complex to tune
+- May create unbalanced cluster sizes
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Meta-Clustering" icon="sitemap" href="/core-concepts/meta-clustering">
+    Organize base clusters into hierarchies
+  </Card>
+  <Card title="Dimensionality Reduction" icon="chart-scatter" href="/core-concepts/dimensionality-reduction">
+    Project clusters to 2D for visualization
+  </Card>
+</CardGroup>

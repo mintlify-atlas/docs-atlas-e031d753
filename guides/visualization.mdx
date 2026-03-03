@@ -1,0 +1,447 @@
+---
+title: Visualization
+description: Visualize clusters and hierarchical results in the terminal
+---
+
+Kura provides multiple ways to visualize your clustering results directly in the terminal. This guide shows you how to use the visualization functions to explore your clusters.
+
+## Visualization Functions
+
+Kura provides three visualization styles from `kura.visualization`:
+
+- `visualise_clusters()` - Basic tree structure
+- `visualise_clusters_enhanced()` - Tree with statistics and progress bars
+- `visualise_clusters_rich()` - Full Rich library formatting with colors
+
+## Basic Visualization
+
+The simplest way to visualize clusters:
+
+```python
+from kura.visualization import visualise_clusters
+from pathlib import Path
+
+# Visualize from checkpoint file
+visualise_clusters(checkpoint_path="./checkpoints/meta_clusters.jsonl")
+```
+
+### Output Example
+
+```
+Clusters (1,500 conversations)
+╠══ Compare and improve Flutter and React state management (45 conversations)
+║   ╚══ Improve and compare Flutter and React state management (32 conversations)
+║       ╠══ Improve React TypeScript application (15 conversations)
+║       ╚══ Compare and select Flutter state management solutions (17 conversations)
+╠══ Optimize blog posts for SEO and improved user engagement (28 conversations)
+╚══ Debug and resolve Python application errors (53 conversations)
+```
+
+## Enhanced Visualization
+
+Add statistics and progress bars:
+
+```python
+from kura.visualization import visualise_clusters_enhanced
+
+visualise_clusters_enhanced(checkpoint_path="./checkpoints/meta_clusters.jsonl")
+```
+
+### Output Example
+
+```
+================================================================================
+🎯 ENHANCED CLUSTER VISUALIZATION
+================================================================================
+🔸 All Clusters
+📊 1,500 conversations (100.0%) [████████████████████]
+
+╚══ 🔸 Programming Help
+    📊 450 conversations (30.0%) [██████░░░░░░░░░░░░░░]
+    💭 Users requesting help with programming tasks and debugging
+
+    ╠══ 🔸 Python Debugging
+    ║   📊 180 conversations (12.0%) [███░░░░░░░░░░░░░░░░░]
+    ║
+    ╚══ 🔸 JavaScript Development
+        📊 150 conversations (10.0%) [██░░░░░░░░░░░░░░░░░░]
+
+================================================================================
+📈 CLUSTER STATISTICS
+================================================================================
+📊 Total Clusters: 25
+🌳 Root Clusters: 5
+💬 Total Conversations: 1,500
+📏 Average Conversations per Root Cluster: 300.0
+================================================================================
+```
+
+## Rich Visualization
+
+For the most visually appealing output using the Rich library:
+
+```python
+from kura.visualization import visualise_clusters_rich
+from rich.console import Console
+
+# Create console for output
+console = Console()
+
+# Visualize with Rich formatting
+visualise_clusters_rich(
+    checkpoint_path="./checkpoints/meta_clusters.jsonl",
+    console=console
+)
+```
+
+The Rich visualization includes:
+- Color-coded clusters by depth
+- Progress bars for cluster sizes
+- Formatted tables with statistics
+- Size distribution analysis
+
+## Visualizing from Cluster Objects
+
+You can also visualize clusters directly from memory:
+
+```python
+from kura.visualization import visualise_clusters_rich
+from kura.v1 import generate_meta_clusters
+
+# Generate clusters
+meta_clusters = await generate_meta_clusters(
+    base_clusters,
+    max_clusters=20
+)
+
+# Visualize directly
+visualise_clusters_rich(clusters=meta_clusters)
+```
+
+## Visualization API Reference
+
+From kura/visualization.py, here are the complete function signatures:
+
+### visualise_clusters
+
+```python
+def visualise_clusters(
+    clusters: Optional[List[Cluster]] = None,
+    *,
+    checkpoint_path: Optional[Union[str, Path]] = None,
+) -> None:
+    """Print a hierarchical visualization of clusters to the terminal.
+
+    This function loads clusters either from the provided list or from a checkpoint file,
+    builds a tree representation, and prints it to the console.
+
+    Args:
+        clusters: List of clusters to visualize. If None, loads from checkpoint_path
+        checkpoint_path: Path to checkpoint file to load clusters from
+
+    Raises:
+        ValueError: If neither clusters nor checkpoint_path is provided
+        FileNotFoundError: If checkpoint file doesn't exist
+    """
+```
+
+### visualise_clusters_enhanced
+
+```python
+def visualise_clusters_enhanced(
+    clusters: Optional[List[Cluster]] = None,
+    *,
+    checkpoint_path: Optional[Union[str, Path]] = None,
+) -> None:
+    """Print an enhanced hierarchical visualization of clusters with colors and statistics.
+
+    This function provides a more detailed visualization than visualise_clusters(),
+    including conversation counts, percentages, progress bars, and descriptions.
+
+    Args:
+        clusters: List of clusters to visualize. If None, loads from checkpoint_path
+        checkpoint_path: Path to checkpoint file to load clusters from
+
+    Raises:
+        ValueError: If neither clusters nor checkpoint_path is provided
+        FileNotFoundError: If checkpoint file doesn't exist
+    """
+```
+
+### visualise_clusters_rich
+
+```python
+def visualise_clusters_rich(
+    clusters: Optional[List[Cluster]] = None,
+    *,
+    checkpoint_path: Optional[Union[str, Path]] = None,
+    console: Optional[Console] = None,
+) -> None:
+    """Print a rich-formatted hierarchical visualization using Rich library.
+
+    This function provides the most visually appealing output with colors,
+    interactive-style formatting, and comprehensive statistics when Rich is available.
+    Falls back to enhanced visualization if Rich is not available.
+
+    Args:
+        clusters: List of clusters to visualize. If None, loads from checkpoint_path
+        checkpoint_path: Path to checkpoint file to load clusters from
+        console: Rich Console instance. If None, creates a new one or falls back
+
+    Raises:
+        ValueError: If neither clusters nor checkpoint_path is provided
+        FileNotFoundError: If checkpoint file doesn't exist
+    """
+```
+
+## Integration with Pipeline
+
+You can visualize clusters at different stages of the pipeline:
+
+```python
+from kura.v1 import (
+    summarise_conversations,
+    generate_base_clusters_from_conversation_summaries,
+    generate_meta_clusters,
+    CheckpointManager
+)
+from kura.visualization import visualise_clusters_rich
+from kura.summarisation import SummaryModel
+from kura.cluster import ClusterDescriptionModel
+
+# Set up pipeline
+checkpoint_mgr = CheckpointManager("./checkpoints")
+summary_model = SummaryModel()
+cluster_model = ClusterDescriptionModel()
+
+# Run summarization
+summaries = await summarise_conversations(
+    conversations,
+    model=summary_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Generate base clusters
+base_clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries,
+    clustering_model=cluster_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Visualize base clusters
+print("\n=== Base Clusters ===")
+visualise_clusters_rich(clusters=base_clusters)
+
+# Generate meta clusters
+meta_clusters = await generate_meta_clusters(
+    base_clusters,
+    max_clusters=20,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Visualize meta clusters
+print("\n=== Meta Clusters ===")
+visualise_clusters_rich(clusters=meta_clusters)
+```
+
+## Convenience Functions
+
+Kura provides helper functions for common visualization patterns:
+
+### visualise_from_checkpoint_manager
+
+Integrates with the CheckpointManager:
+
+```python
+from kura.visualization import visualise_from_checkpoint_manager
+
+visualise_from_checkpoint_manager(
+    checkpoint_manager,
+    meta_cluster_model,
+    style="rich",  # "basic", "enhanced", or "rich"
+    console=console
+)
+```
+
+### visualise_pipeline_results
+
+Visualize results directly from pipeline execution:
+
+```python
+from kura.visualization import visualise_pipeline_results
+
+visualise_pipeline_results(
+    clusters,
+    style="enhanced",  # "basic", "enhanced", or "rich"
+    console=console
+)
+```
+
+## Customizing Output
+
+You can customize the Rich console output:
+
+```python
+from rich.console import Console
+
+# Create console with custom settings
+console = Console(
+    width=120,          # Wider output
+    force_terminal=True, # Force colored output
+    force_jupyter=False
+)
+
+visualise_clusters_rich(
+    checkpoint_path="./checkpoints/meta_clusters.jsonl",
+    console=console
+)
+```
+
+## Export Visualization
+
+Save visualization to a file:
+
+```python
+from rich.console import Console
+
+# Export to HTML
+console = Console(record=True)
+visualise_clusters_rich(
+    checkpoint_path="./checkpoints/meta_clusters.jsonl",
+    console=console
+)
+console.save_html("clusters.html")
+
+# Export to text
+console = Console(record=True, width=100)
+visualise_clusters_rich(
+    checkpoint_path="./checkpoints/meta_clusters.jsonl",
+    console=console
+)
+console.save_text("clusters.txt")
+```
+
+## Understanding the Tree Structure
+
+The tree visualization shows hierarchical relationships:
+
+```
+╠══ Parent Cluster (100 conversations)
+║   ╠══ Child Cluster 1 (60 conversations)
+║   ╚══ Child Cluster 2 (40 conversations)
+╚══ Another Parent Cluster (50 conversations)
+```
+
+- `╠══` indicates a non-last child
+- `╚══` indicates the last child
+- `║` continues the vertical line
+- Numbers in parentheses show conversation count
+
+## Best Practices
+
+<Steps>
+
+### Choose the Right Style
+
+- **Basic**: Quick overview, CI/CD pipelines, logs
+- **Enhanced**: Local development, detailed analysis
+- **Rich**: Presentations, reports, documentation
+
+### Use Wide Terminal
+
+For best results, use a wide terminal window:
+
+```bash
+# Check terminal width
+tput cols  # Should be 120+ for Rich visualization
+```
+
+### Handle Large Hierarchies
+
+For very deep hierarchies, consider:
+
+```python
+# Generate fewer meta clusters
+meta_clusters = await generate_meta_clusters(
+    base_clusters,
+    max_clusters=10  # Smaller tree
+)
+```
+
+### Save Visualizations
+
+Save important visualizations for documentation:
+
+```python
+console = Console(record=True)
+visualise_clusters_rich(clusters=clusters, console=console)
+console.save_html("analysis_results.html")
+```
+
+</Steps>
+
+## Troubleshooting
+
+### Rich Not Available
+
+If you see:
+```
+Rich library not available. Using enhanced visualization...
+```
+
+Install Rich:
+```bash
+uv pip install rich
+```
+
+### Checkpoint File Not Found
+
+```python
+FileNotFoundError: Checkpoint file not found: ./checkpoints/meta_clusters.jsonl
+```
+
+Ensure the checkpoint file exists:
+```python
+from pathlib import Path
+
+if not Path("./checkpoints/meta_clusters.jsonl").exists():
+    print("Run the pipeline first to generate clusters")
+```
+
+### Garbled Output
+
+If tree characters don't render correctly:
+
+```python
+# Use ASCII-only characters
+import os
+os.environ['TERM'] = 'dumb'
+```
+
+Or switch to basic visualization:
+```python
+visualise_clusters(checkpoint_path="./checkpoints/meta_clusters.jsonl")
+```
+
+## Terminal Recording
+
+Create animated terminal recordings:
+
+```bash
+# Install asciinema
+sudo apt-get install asciinema
+
+# Record visualization
+asciinema rec clusters-demo.cast
+python visualize.py
+# Press Ctrl+D to stop
+
+# Play back
+asciinema play clusters-demo.cast
+```
+
+## Next Steps
+
+- Learn about the [web UI](./web-ui) for interactive visualization
+- Explore [custom models](./custom-models) to customize your analysis
+- Check out [caching](./caching) to improve performance

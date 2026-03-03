@@ -1,0 +1,272 @@
+---
+title: Data Loading
+description: Load conversation data from various sources into Kura
+---
+
+Kura supports multiple data sources for loading conversations, including HuggingFace datasets, Claude conversation exports, and custom data formats. This guide shows you how to load data from each source.
+
+## Loading from HuggingFace Datasets
+
+The `from_hf_dataset` method allows you to load conversations from any HuggingFace dataset with a compatible structure:
+
+```python
+from kura.types import Conversation
+
+# Basic usage
+conversations = Conversation.from_hf_dataset(
+    "ivanleomk/synthetic-gemini-conversations",
+    split="train"
+)
+```
+
+### Limiting the Number of Conversations
+
+For testing or smaller analyses, you can limit the number of conversations loaded:
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "ivanleomk/synthetic-gemini-conversations",
+    split="train",
+    max_conversations=1000  # Only load first 1000 conversations
+)
+```
+
+### Custom Field Mapping
+
+If your dataset has a different structure, you can provide custom mapping functions:
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "your-dataset-name",
+    split="train",
+    chat_id_fn=lambda x: x["conversation_id"],
+    created_at_fn=lambda x: x["timestamp"],
+    messages_fn=lambda x: x["dialogue"],
+    metadata_fn=lambda x: {
+        "user_type": x.get("user_category"),
+        "session_length": len(x["dialogue"])
+    }
+)
+```
+
+### Adding Metadata
+
+Metadata enriches your analysis by providing additional context about each conversation:
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "allenai/WildChat-nontoxic",
+    split="train",
+    metadata_fn=lambda x: {
+        "model": x["model"],
+        "toxic": x["toxic"],
+        "redacted": x["redacted"],
+    }
+)
+```
+
+This metadata will be carried through the analysis pipeline and can be used for filtering or additional analysis.
+
+## Loading from Claude Conversation Dumps
+
+If you have exported your Claude conversation history, Kura can parse it directly:
+
+```python
+from kura.types import Conversation
+
+# Basic usage
+conversations = Conversation.from_claude_conversation_dump("conversations.json")
+```
+
+### With Custom Metadata
+
+You can extract additional metadata from the Claude export:
+
+```python
+conversations = Conversation.from_claude_conversation_dump(
+    "conversations.json",
+    metadata_fn=lambda x: {
+        "project_name": x.get("project"),
+        "has_attachments": len(x.get("attachments", [])) > 0,
+    }
+)
+```
+
+The Claude loader automatically:
+- Converts message timestamps to ISO format
+- Maps "human" sender to "user" role
+- Maps "assistant" sender to "assistant" role
+- Extracts text content from message objects
+- Sorts messages by timestamp
+
+## Creating Custom Conversations
+
+For custom data sources, create `Conversation` objects directly:
+
+```python
+from kura.types import Conversation, Message
+from datetime import datetime
+from uuid import uuid4
+
+# Create messages
+messages = [
+    Message(
+        created_at=datetime.now(),
+        role="user",
+        content="How do I implement authentication?"
+    ),
+    Message(
+        created_at=datetime.now(),
+        role="assistant",
+        content="To implement authentication, you can use..."
+    )
+]
+
+# Create conversation
+conversation = Conversation(
+    chat_id=str(uuid4()),
+    created_at=datetime.now(),
+    messages=messages,
+    metadata={
+        "source": "support_system",
+        "priority": "high"
+    }
+)
+
+conversations = [conversation]  # Add to list for processing
+```
+
+## Loading from Multiple Sources
+
+You can combine conversations from different sources:
+
+```python
+from kura.types import Conversation
+
+# Load from multiple sources
+hf_conversations = Conversation.from_hf_dataset(
+    "dataset1",
+    metadata_fn=lambda x: {"source": "hf_dataset"}
+)
+
+claude_conversations = Conversation.from_claude_conversation_dump(
+    "conversations.json",
+    metadata_fn=lambda x: {"source": "claude_export"}
+)
+
+# Combine them
+all_conversations = hf_conversations + claude_conversations
+
+print(f"Total conversations: {len(all_conversations)}")
+```
+
+## Saving and Loading Conversation Dumps
+
+You can save conversations to disk for faster reloading:
+
+```python
+from kura.types import Conversation
+
+# Save conversations
+Conversation.generate_conversation_dump(
+    conversations,
+    "my_conversations.json"
+)
+
+# Load them back later
+conversations = Conversation.from_conversation_dump("my_conversations.json")
+```
+
+## Best Practices
+
+<Steps>
+
+### Start with a Sample
+
+When working with large datasets, start with a small sample to test your pipeline:
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "large-dataset",
+    max_conversations=100
+)
+```
+
+### Use Metadata Strategically
+
+Add metadata that will be useful for analysis:
+- User segments or types
+- Conversation source (support, sales, etc.)
+- Time periods or seasons
+- Product versions
+
+### Validate Your Data
+
+Check that your conversations loaded correctly:
+
+```python
+print(f"Loaded {len(conversations)} conversations")
+print(f"First conversation has {len(conversations[0].messages)} messages")
+print(f"Sample content: {conversations[0].messages[0].content[:100]}...")
+```
+
+</Steps>
+
+## Troubleshooting
+
+### HuggingFace Dataset Not Found
+
+If you get an import error when loading from HuggingFace:
+
+```bash
+ImportError: Please install hf datasets to load conversations from a dataset
+```
+
+Install the datasets package:
+
+```bash
+uv pip install datasets
+```
+
+### Message Format Issues
+
+If your dataset has a different message structure, use custom mapping functions to transform it:
+
+```python
+def custom_messages_fn(item):
+    # Transform your message format to Kura's expected format
+    return [
+        Message(
+            role=msg["speaker"],
+            content=msg["text"],
+            created_at=msg["timestamp"]
+        )
+        for msg in item["dialogue"]
+    ]
+
+conversations = Conversation.from_hf_dataset(
+    "your-dataset",
+    messages_fn=custom_messages_fn
+)
+```
+
+### Memory Issues with Large Datasets
+
+For very large datasets, use streaming mode:
+
+```python
+# The from_hf_dataset method uses streaming by default
+conversations = Conversation.from_hf_dataset(
+    "very-large-dataset",
+    split="train",
+    max_conversations=10000  # Process in chunks
+)
+```
+
+## Next Steps
+
+Now that you've loaded your conversations, you can:
+- [Create custom models](./custom-models) for embedding, summarization, or clustering
+- [Use caching](./caching) to improve performance
+- [Visualize your results](./visualization)
+- [Launch the web UI](./web-ui) to explore your data

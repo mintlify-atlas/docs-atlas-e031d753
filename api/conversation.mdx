@@ -1,0 +1,203 @@
+---
+title: Conversation & Message
+description: Core types for representing chat conversations and individual messages
+---
+
+## Message
+
+Represents a single message within a conversation.
+
+<ResponseField name="created_at" type="datetime" required>
+  Timestamp when the message was created
+</ResponseField>
+
+<ResponseField name="role" type="Literal['user', 'assistant']" required>
+  Role of the message sender
+</ResponseField>
+
+<ResponseField name="content" type="str" required>
+  Text content of the message
+</ResponseField>
+
+### Example
+
+```python
+from kura.types import Message
+from datetime import datetime
+
+message = Message(
+    created_at=datetime.now(),
+    role="user",
+    content="How do I implement a binary search tree?"
+)
+```
+
+## Conversation
+
+Represents a complete conversation with metadata.
+
+<ResponseField name="chat_id" type="str" required>
+  Unique identifier for the conversation
+</ResponseField>
+
+<ResponseField name="created_at" type="datetime" required>
+  Timestamp when the conversation was created
+</ResponseField>
+
+<ResponseField name="messages" type="list[Message]" required>
+  List of messages in the conversation
+</ResponseField>
+
+<ResponseField name="metadata" type="metadata_dict" required>
+  <Expandable title="metadata_dict">
+    Dictionary containing conversation metadata. Type definition:
+    ```python
+    dict[str, Union[str, int, float, bool, list[str], list[int], list[float]]]
+    ```
+  </Expandable>
+</ResponseField>
+
+### Class Methods
+
+#### from_hf_dataset()
+
+Load conversations from a Hugging Face dataset.
+
+```python
+@classmethod
+def from_hf_dataset(
+    cls,
+    dataset_name: str,
+    split: str = "train",
+    max_conversations: Union[int, None] = None,
+    chat_id_fn=lambda x: x["chat_id"],
+    created_at_fn=lambda x: x["created_at"],
+    messages_fn=lambda x: x["messages"],
+    metadata_fn=lambda x: {},
+) -> list["Conversation"]
+```
+
+**Parameters:**
+- `dataset_name` (str): Name of the HuggingFace dataset
+- `split` (str): Dataset split to load, defaults to "train"
+- `max_conversations` (Union[int, None]): Maximum number of conversations to load
+- `chat_id_fn` (Callable): Function to extract chat_id from dataset item
+- `created_at_fn` (Callable): Function to extract created_at from dataset item
+- `messages_fn` (Callable): Function to extract messages from dataset item
+- `metadata_fn` (Callable): Function to extract metadata from dataset item
+
+**Example:**
+
+```python
+from kura.types import Conversation
+
+conversations = Conversation.from_hf_dataset(
+    "allenai/WildChat-nontoxic",
+    split="train",
+    max_conversations=1000,
+    metadata_fn=lambda x: {
+        "model": x["model"],
+        "toxic": x["toxic"],
+    }
+)
+```
+
+#### from_claude_conversation_dump()
+
+Load conversations from a Claude conversation export file.
+
+```python
+@classmethod
+def from_claude_conversation_dump(
+    cls,
+    file_path: str,
+    metadata_fn: Callable[[dict], metadata_dict] = lambda x: {},
+) -> list["Conversation"]
+```
+
+**Parameters:**
+- `file_path` (str): Path to the Claude conversation dump JSON file
+- `metadata_fn` (Callable): Function to extract metadata from conversation dict
+
+**Example:**
+
+```python
+from kura.types import Conversation
+
+conversations = Conversation.from_claude_conversation_dump(
+    "conversations.json",
+    metadata_fn=lambda x: {"project": x.get("project_uuid")}
+)
+```
+
+#### generate_conversation_dump()
+
+Save a list of conversations to a JSON file.
+
+```python
+@classmethod
+def generate_conversation_dump(
+    cls, conversations: list["Conversation"], file_path: str
+) -> None
+```
+
+**Parameters:**
+- `conversations` (list[Conversation]): List of conversations to save
+- `file_path` (str): Output file path
+
+**Example:**
+
+```python
+from kura.types import Conversation
+
+Conversation.generate_conversation_dump(conversations, "backup.json")
+```
+
+#### from_conversation_dump()
+
+Load conversations from a previously saved conversation dump.
+
+```python
+@classmethod
+def from_conversation_dump(cls, file_path: str) -> list["Conversation"]
+```
+
+**Parameters:**
+- `file_path` (str): Path to the conversation dump JSON file
+
+**Example:**
+
+```python
+from kura.types import Conversation
+
+conversations = Conversation.from_conversation_dump("backup.json")
+```
+
+### Complete Example
+
+```python
+from kura.types import Conversation, Message
+from datetime import datetime
+
+conversation = Conversation(
+    chat_id="chat-123",
+    created_at=datetime.now(),
+    messages=[
+        Message(
+            created_at=datetime.now(),
+            role="user",
+            content="What is recursion?"
+        ),
+        Message(
+            created_at=datetime.now(),
+            role="assistant",
+            content="Recursion is when a function calls itself."
+        )
+    ],
+    metadata={
+        "model": "claude-3-sonnet",
+        "token_count": 150,
+        "tags": ["programming", "computer-science"]
+    }
+)
+```

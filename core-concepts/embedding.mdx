@@ -1,0 +1,350 @@
+---
+title: Embedding Models
+description: Converting text summaries to vector representations
+---
+
+## Overview
+
+Embedding transforms text summaries into high-dimensional vectors (embeddings) that capture semantic meaning. Similar conversations have similar embeddings, enabling mathematical clustering.
+
+Kura supports multiple embedding providers through the `BaseEmbeddingModel` interface.
+
+## The embed_summaries Function
+
+The main entry point is `embed_summaries` in `kura/embedding.py:14-33`:
+
+```python
+async def embed_summaries(
+    summaries: list[ConversationSummary], 
+    embedding_model: BaseEmbeddingModel
+) -> list[dict[str, Union[ConversationSummary, list[float]]]]:
+    """Embeds conversation summaries and returns items ready for clustering."""
+```
+
+### Returns
+
+A list of dictionaries with:
+- `"item"`: The original ConversationSummary
+- `"embedding"`: List of floats (the vector representation)
+
+```python
+[
+    {
+        "item": ConversationSummary(...),
+        "embedding": [0.123, -0.456, 0.789, ...]  # 1536 dimensions for OpenAI
+    },
+    ...
+]
+```
+
+## Available Embedding Models
+
+### OpenAI
+
+The most commonly used provider (`kura/embedding.py:39-108`):
+
+```python
+from kura.embedding import OpenAIEmbeddingModel
+
+embedding_model = OpenAIEmbeddingModel(
+    model_name="text-embedding-3-small",
+    model_batch_size=50,
+    n_concurrent_jobs=5
+)
+```
+
+#### Parameters
+
+- **model_name** (str): OpenAI model identifier
+  - `"text-embedding-3-small"`: 1536 dimensions, fast and cost-effective (default)
+  - `"text-embedding-3-large"`: 3072 dimensions, higher quality
+  - `"text-embedding-ada-002"`: Legacy model (1536 dimensions)
+- **model_batch_size** (int): Number of texts per API call (default: 50, max: 2048)
+- **n_concurrent_jobs** (int): Number of parallel API calls (default: 5)
+
+<Note>
+OpenAI's `text-embedding-3-small` provides the best balance of speed, cost, and quality for most use cases.
+</Note>
+
+#### Implementation Details
+
+From `kura/embedding.py:58-76`:
+
+```python
+@retry(wait=wait_fixed(3), stop=stop_after_attempt(3))
+async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+    """Embed a single batch of texts."""
+    async with self._semaphore:
+        resp = await self.client.embeddings.create(
+            input=texts, 
+            model=self.model_name
+        )
+        embeddings = [item.embedding for item in resp.data]
+        return embeddings
+```
+
+Features:
+- Automatic retry with 3 second wait (using `tenacity`)
+- Semaphore-based concurrency control
+- Batching for efficiency
+
+### Sentence Transformers
+
+Local embedding models for offline use (`kura/embedding.py:111-169`):
+
+```python
+from kura.embedding import SentenceTransformerEmbeddingModel
+
+embedding_model = SentenceTransformerEmbeddingModel(
+    model_name="all-MiniLM-L6-v2",
+    model_batch_size=128,
+    device="cuda"  # or "cpu"
+)
+```
+
+#### Parameters
+
+- **model_name** (str): HuggingFace model identifier
+  - `"all-MiniLM-L6-v2"`: 384 dimensions, very fast (default)
+  - `"all-mpnet-base-v2"`: 768 dimensions, higher quality
+  - `"multi-qa-mpnet-base-dot-v1"`: Optimized for question-answering
+- **model_batch_size** (int): Batch size for inference (default: 128)
+- **device** (str): Compute device ("cpu", "cuda", "mps")
+
+<Tip>
+Sentence Transformers run locally without API costs. Use GPU acceleration (`device="cuda"`) for large datasets.
+</Tip>
+
+#### Advantages
+
+- No API costs or rate limits
+- Works offline
+- Fast with GPU acceleration
+- Many pre-trained models available
+
+#### Disadvantages
+
+- Lower quality than OpenAI for general text
+- Requires local compute resources
+- Larger models need significant RAM/VRAM
+
+### Cohere
+
+High-quality embeddings optimized for clustering (`kura/embedding.py:172-255`):
+
+```python
+from kura.embedding import CohereEmbeddingModel
+
+embedding_model = CohereEmbeddingModel(
+    model_name="embed-v4.0",
+    model_batch_size=96,
+    n_concurrent_jobs=5,
+    input_type="clustering",
+    api_key="your-api-key"  # or set COHERE_API_KEY env var
+)
+```
+
+#### Parameters
+
+- **model_name** (str): Cohere model (default: "embed-v4.0")
+- **model_batch_size** (int): Batch size (default: 96, max: 96)
+- **n_concurrent_jobs** (int): Parallel requests (default: 5)
+- **input_type** (str): Optimization mode
+  - `"clustering"`: Optimize for clustering tasks (recommended)
+  - `"search_document"`: For retrieval documents
+  - `"search_query"`: For search queries
+- **api_key** (str | None): API key (falls back to environment variable)
+
+<Warning>
+Cohere requires the `cohere` package: `pip install cohere`
+</Warning>
+
+## Usage in the Pipeline
+
+### Standalone Usage
+
+```python
+from kura.embedding import embed_summaries, OpenAIEmbeddingModel
+
+embedding_model = OpenAIEmbeddingModel()
+
+embedded_items = await embed_summaries(
+    summaries=summaries,
+    embedding_model=embedding_model
+)
+
+print(embedded_items[0])
+# {
+#   "item": ConversationSummary(...),
+#   "embedding": [0.123, -0.456, ...]
+# }
+```
+
+### In Clustering Pipeline
+
+From `kura/cluster.py:491-492`:
+
+```python
+embedded_items = await embed_summaries(summaries, embedding_model)
+cluster_id_to_summaries = clustering_method.cluster(embedded_items)
+```
+
+## Batching and Concurrency
+
+All embedding models implement efficient batching:
+
+```python
+from kura.utils import batch_texts
+
+# Split texts into batches
+batches = batch_texts(texts, batch_size=50)
+# [[text1, text2, ..., text50], [text51, ..., text100], ...]
+
+# Process batches concurrently
+tasks = [self._embed_batch(batch) for batch in batches]
+results = await asyncio.gather(*tasks)
+```
+
+From `kura/embedding.py:85-99` for OpenAI:
+
+```python
+async def embed(self, texts: list[str]) -> list[list[float]]:
+    # Create batches
+    batches = batch_texts(texts, self._model_batch_size)
+    
+    # Process all batches concurrently
+    tasks = [self._embed_batch(batch) for batch in batches]
+    results_list_of_lists = await gather(*tasks)
+    
+    # Flatten results
+    embeddings = []
+    for result_batch in results_list_of_lists:
+        embeddings.extend(result_batch)
+    
+    return embeddings
+```
+
+## Choosing an Embedding Model
+
+### Comparison Table
+
+| Model | Dimensions | Speed | Quality | Cost | Best For |
+|-------|------------|-------|---------|------|----------|
+| OpenAI text-embedding-3-small | 1536 | Fast | High | Low | General use, production |
+| OpenAI text-embedding-3-large | 3072 | Medium | Very High | Medium | High-quality clustering |
+| Sentence Transformers (MiniLM) | 384 | Very Fast | Medium | Free | Offline, testing |
+| Sentence Transformers (MPNet) | 768 | Fast | High | Free | Offline, production |
+| Cohere embed-v4.0 | 1024 | Fast | Very High | Low-Medium | Clustering-optimized |
+
+### Decision Factors
+
+**Choose OpenAI if:**
+- You need high-quality embeddings
+- Cost is acceptable ($0.02 per 1M tokens)
+- You want the standard choice
+
+**Choose Sentence Transformers if:**
+- You need offline processing
+- You want to avoid API costs
+- You have GPU resources available
+
+**Choose Cohere if:**
+- Clustering quality is critical
+- You want embeddings optimized for your task
+- You're already using Cohere for other features
+
+## Custom Embedding Models
+
+Implement `BaseEmbeddingModel` for custom providers:
+
+```python
+from kura.base_classes import BaseEmbeddingModel
+
+class CustomEmbeddingModel(BaseEmbeddingModel):
+    def slug(self) -> str:
+        """Unique identifier for this model configuration."""
+        return f"custom-model-{self.version}"
+    
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Convert texts to embeddings.
+        
+        Args:
+            texts: List of text strings to embed
+            
+        Returns:
+            List of embedding vectors (one per input text)
+        """
+        # Your implementation here
+        embeddings = await self.api_client.embed_batch(texts)
+        return embeddings
+```
+
+## Performance Optimization
+
+### Batch Size Tuning
+
+```python
+# OpenAI: Larger batches = fewer API calls
+embedding_model = OpenAIEmbeddingModel(
+    model_batch_size=2048  # Max allowed by OpenAI
+)
+
+# Sentence Transformers: Tune based on GPU memory
+embedding_model = SentenceTransformerEmbeddingModel(
+    model_batch_size=256,  # Increase if you have GPU memory
+    device="cuda"
+)
+```
+
+### Concurrency Tuning
+
+```python
+# OpenAI: Balance rate limits vs speed
+embedding_model = OpenAIEmbeddingModel(
+    n_concurrent_jobs=10  # Higher = faster, but may hit rate limits
+)
+
+# Monitor rate limits: 5,000 RPM typical for most accounts
+```
+
+### Caching Embeddings
+
+Store embeddings in checkpoints to avoid re-computation:
+
+```python
+# Embeddings are automatically saved when using checkpoint managers
+from kura.checkpoints import HFDatasetCheckpointManager
+
+checkpoint_mgr = HFDatasetCheckpointManager("./checkpoints")
+
+# First run: computes embeddings
+summaries = await summarise_conversations(
+    conversations=conversations,
+    model=summary_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Embeddings are in summary.metadata["embedding"] if cached
+```
+
+## Logging
+
+All embedding models include detailed logging:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+# Output:
+# INFO:kura.embedding:Initialized OpenAIEmbeddingModel with model=text-embedding-3-small
+# INFO:kura.embedding:Starting embedding of 1000 texts using text-embedding-3-small
+# DEBUG:kura.embedding:Split 1000 texts into 20 batches of size 50
+# INFO:kura.embedding:Successfully embedded 1000 texts, produced 1000 embeddings
+```
+
+## Next Steps
+
+<Card title="Clustering" icon="object-group" href="/core-concepts/clustering">
+  Use embeddings to group similar conversations into clusters
+</Card>

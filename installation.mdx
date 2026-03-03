@@ -1,0 +1,308 @@
+---
+title: Installation
+description: Install Kura and its dependencies for conversation analysis
+---
+
+## Requirements
+
+Kura requires Python 3.10 or higher.
+
+<Tip>
+Kura works on Linux, macOS, and Windows. We recommend using a virtual environment to avoid dependency conflicts.
+</Tip>
+
+## Install with uv (recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer. If you don't have it installed:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then install Kura:
+
+```bash
+uv pip install kura
+```
+
+## Install with pip
+
+You can install Kura using pip:
+
+```bash
+pip install kura
+```
+
+## Install with conda
+
+First, ensure pip is available in your conda environment:
+
+```bash
+conda install pip
+pip install kura
+```
+
+<Note>
+Kura is not currently available as a conda package. You need to use pip within your conda environment.
+</Note>
+
+## Optional dependencies
+
+Kura has several optional dependency groups for extended functionality:
+
+### Visualization
+
+For rich terminal visualization with colors and formatting:
+
+<CodeGroup>
+```bash uv
+uv pip install "kura[visualization]"
+```
+
+```bash pip
+pip install "kura[visualization]"
+```
+</CodeGroup>
+
+This installs the [Rich](https://github.com/Textualize/rich) library for enhanced output.
+
+### Parquet support
+
+For saving checkpoints in Parquet format:
+
+<CodeGroup>
+```bash uv
+uv pip install "kura[parquet]"
+```
+
+```bash pip
+pip install "kura[parquet]"
+```
+</CodeGroup>
+
+This installs [PyArrow](https://arrow.apache.org/docs/python/) for efficient columnar data storage.
+
+### Embeddings
+
+For local embedding models and additional providers:
+
+<CodeGroup>
+```bash uv
+uv pip install "kura[embeddings]"
+```
+
+```bash pip
+pip install "kura[embeddings]"
+```
+</CodeGroup>
+
+This installs:
+- [sentence-transformers](https://www.sbert.net/) for local embedding models
+- [cohere](https://cohere.com/) SDK for Cohere embeddings
+
+### Development dependencies
+
+For contributing to Kura:
+
+<CodeGroup>
+```bash uv
+uv pip install "kura[dev]"
+```
+
+```bash pip
+pip install "kura[dev]"
+```
+</CodeGroup>
+
+This installs testing, linting, and type checking tools.
+
+### All optional dependencies
+
+To install everything:
+
+<CodeGroup>
+```bash uv
+uv pip install "kura[visualization,parquet,embeddings]"
+```
+
+```bash pip
+pip install "kura[visualization,parquet,embeddings]"
+```
+</CodeGroup>
+
+## Verify installation
+
+Check that Kura is installed correctly:
+
+```bash
+kura --help
+```
+
+You should see output similar to:
+
+```
+Usage: kura [OPTIONS] COMMAND [ARGS]...
+
+Kura - Conversation Analysis CLI
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  analyze-checkpoints   Analyze existing JSONL checkpoints
+  migrate-checkpoints   Migrate JSONL checkpoints to HuggingFace format
+  start-app            Start the Kura web server
+```
+
+## Development installation
+
+If you want to contribute to Kura or modify the source code:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/567-labs/kura.git
+    cd kura
+    ```
+  </Step>
+  
+  <Step title="Create a virtual environment">
+    <CodeGroup>
+    ```bash uv
+    uv venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    ```
+    
+    ```bash venv
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Install in development mode">
+    ```bash
+    uv pip install -e ".[dev]"
+    ```
+  </Step>
+  
+  <Step title="Run tests">
+    ```bash
+    pytest
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+See [CONTRIBUTING.md](https://github.com/567-labs/kura/blob/main/CONTRIBUTING.md) for detailed development guidelines.
+</Tip>
+
+## API keys setup
+
+Kura uses LLM providers for summarization and clustering. You'll need API keys from at least one provider:
+
+### OpenAI
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+### Anthropic
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+### Google (Gemini)
+
+```bash
+export GOOGLE_API_KEY="your-api-key-here"
+```
+
+<Warning>
+Never commit API keys to version control. Use environment variables or a `.env` file (and add it to `.gitignore`).
+</Warning>
+
+### Using .env files
+
+Create a `.env` file in your project directory:
+
+```bash .env
+OPENAI_API_KEY=your-api-key-here
+ANTHROPIC_API_KEY=your-api-key-here
+GOOGLE_API_KEY=your-api-key-here
+```
+
+Kura will automatically load environment variables if you use a library like [python-dotenv](https://github.com/theskumar/python-dotenv):
+
+```python
+from dotenv import load_dotenv
+load_dotenv()
+
+# Now use Kura as normal
+```
+
+## Troubleshooting
+
+### Import errors
+
+If you see import errors for optional dependencies:
+
+```python
+ImportError: Please install rich to use visualization features
+```
+
+Install the missing optional dependency:
+
+```bash
+uv pip install "kura[visualization]"
+```
+
+### Version conflicts
+
+If you encounter dependency conflicts, try creating a fresh virtual environment:
+
+```bash
+python -m venv fresh_env
+source fresh_env/bin/activate
+pip install kura
+```
+
+### Platform-specific issues
+
+<Tabs>
+  <Tab title="macOS">
+    If you encounter issues with HDBSCAN or UMAP on Apple Silicon:
+    
+    ```bash
+    # Install dependencies with conda first
+    conda install -c conda-forge hdbscan umap-learn
+    pip install kura
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    Some dependencies may require Visual C++ build tools. Download from:
+    https://visualstudio.microsoft.com/visual-cpp-build-tools/
+  </Tab>
+  
+  <Tab title="Linux">
+    Most Linux distributions work out of the box. For older systems, you may need:
+    
+    ```bash
+    sudo apt-get install python3-dev build-essential
+    ```
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart tutorial" icon="bolt" href="/quickstart">
+    Process your first conversations in 5 minutes
+  </Card>
+  
+  <Card title="Core concepts" icon="book" href="/core-concepts/overview">
+    Understand how Kura works
+  </Card>
+</CardGroup>

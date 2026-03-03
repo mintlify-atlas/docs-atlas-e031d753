@@ -1,0 +1,268 @@
+---
+title: Conversation Data Model
+description: How conversations are structured and loaded into Kura
+---
+
+## The Conversation Model
+
+At the core of Kura is the `Conversation` Pydantic model defined in `kura/types/conversation.py`:
+
+```python
+class Message(BaseModel):
+    created_at: datetime
+    role: Literal["user", "assistant"]
+    content: str
+
+class Conversation(BaseModel):
+    chat_id: str
+    created_at: datetime
+    messages: list[Message]
+    metadata: metadata_dict  # dict[str, Union[str, int, float, bool, list[str], list[int], list[float]]]
+```
+
+### Fields
+
+- **chat_id**: Unique identifier for the conversation (must be unique across your dataset)
+- **created_at**: Timestamp when the conversation started
+- **messages**: Ordered list of user and assistant messages
+- **metadata**: Flexible dictionary for custom properties (e.g., model name, language, user type)
+
+<Note>
+The `metadata` field supports strings, numbers, booleans, and lists of these types. This is validated at the type level.
+</Note>
+
+## Loading Conversations
+
+### From HuggingFace Datasets
+
+The most common method for loading large conversation datasets:
+
+```python
+from kura.types import Conversation
+
+conversations = Conversation.from_hf_dataset(
+    dataset_name="allenai/WildChat-nontoxic",
+    split="train",
+    max_conversations=1000,  # Optional: limit for testing
+    chat_id_fn=lambda x: x["chat_id"],
+    created_at_fn=lambda x: x["created_at"],
+    messages_fn=lambda x: x["messages"],
+    metadata_fn=lambda x: {
+        "model": x["model"],
+        "toxic": x["toxic"],
+        "redacted": x["redacted"],
+    }
+)
+```
+
+#### Parameters
+
+- `dataset_name` (str): HuggingFace dataset identifier
+- `split` (str): Dataset split to load (default: "train")
+- `max_conversations` (int | None): Limit number of conversations (useful for testing)
+- `chat_id_fn` (callable): Function to extract chat ID from dataset row
+- `created_at_fn` (callable): Function to extract timestamp from dataset row
+- `messages_fn` (callable): Function to extract messages from dataset row
+- `metadata_fn` (callable): Function to extract custom metadata from dataset row
+
+<Tip>
+Use `max_conversations` during development to quickly test your pipeline on a subset of data.
+</Tip>
+
+### From Claude Conversation Dumps
+
+If you've exported your Claude conversation history:
+
+```python
+conversations = Conversation.from_claude_conversation_dump(
+    file_path="conversations.json",
+    metadata_fn=lambda x: {
+        "name": x.get("name", ""),
+        "project_id": x.get("project_uuid", "")
+    }
+)
+```
+
+This automatically handles:
+- Parsing Claude's JSON format
+- Converting message timestamps
+- Mapping "human"/"assistant" roles to "user"/"assistant"
+- Extracting text content from Claude's content blocks
+
+### From JSONL Files
+
+For conversations previously saved by Kura:
+
+```python
+conversations = Conversation.from_conversation_dump(
+    file_path="my_conversations.jsonl"
+)
+```
+
+### Custom Data Sources
+
+For any other format, create `Conversation` objects directly:
+
+```python
+from datetime import datetime
+from kura.types import Conversation, Message
+
+conversations = [
+    Conversation(
+        chat_id="conv_001",
+        created_at=datetime.now(),
+        messages=[
+            Message(
+                created_at=datetime.now(),
+                role="user",
+                content="How do I reverse a list in Python?"
+            ),
+            Message(
+                created_at=datetime.now(),
+                role="assistant",
+                content="You can reverse a list using the reverse() method or slicing: my_list[::-1]"
+            )
+        ],
+        metadata={
+            "language": "english",
+            "topic": "programming"
+        }
+    )
+]
+```
+
+## Saving Conversations
+
+Export conversations to JSONL for later use:
+
+```python
+Conversation.generate_conversation_dump(
+    conversations=conversations,
+    file_path="my_conversations.jsonl"
+)
+```
+
+This creates a JSONL file where each line is a JSON-serialized conversation.
+
+## Working with Metadata
+
+Metadata enriches conversations with custom properties for filtering and analysis.
+
+### Attaching Metadata at Load Time
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "allenai/WildChat-nontoxic",
+    metadata_fn=lambda x: {
+        "model": x["model"],
+        "language": x["language"],
+        "turn_count": len(x["messages"])
+    }
+)
+```
+
+### LLM-Powered Metadata Extraction
+
+For complex properties that require analysis, use LLM extractors during the summarization stage (see [Summarization](/core-concepts/summarization)).
+
+<Accordion title="Example: Language Detection Extractor">
+```python
+async def language_extractor(
+    conversation: Conversation,
+    sems: dict[str, asyncio.Semaphore],
+    clients: dict[str, instructor.AsyncInstructor],
+) -> ExtractedProperty:
+    sem = sems.get("default")
+    client = clients.get("default")
+    
+    async with sem:
+        resp = await client.chat.completions.create(
+            model="gemini-2.0-flash",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Extract the primary language of this conversation.",
+                },
+                {
+                    "role": "user",
+                    "content": "\n".join(
+                        [f"{msg.role}: {msg.content}" for msg in conversation.messages]
+                    ),
+                },
+            ],
+            response_model=Language,
+        )
+        return ExtractedProperty(
+            name="language_code",
+            value=resp.language_code,
+        )
+```
+</Accordion>
+
+## Message Structure
+
+Each `Message` represents a single turn in the conversation:
+
+```python
+class Message(BaseModel):
+    created_at: datetime  # When the message was sent
+    role: Literal["user", "assistant"]  # Who sent it
+    content: str  # Message text
+```
+
+### Important Notes
+
+- Messages must alternate between "user" and "assistant" roles for most LLM analysis
+- The `content` field should contain only text (no tool calls, images, etc.)
+- Messages are ordered chronologically by their position in the list
+
+<Warning>
+Kura currently only supports text-based conversations. Multimodal content (images, tool calls) should be stripped or converted to text descriptions before processing.
+</Warning>
+
+## Best Practices
+
+### Unique Chat IDs
+
+Ensure each conversation has a globally unique `chat_id`:
+
+```python
+import uuid
+
+chat_id = str(uuid.uuid4())  # e.g., "550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Handling Large Datasets
+
+For datasets with millions of conversations:
+
+1. Use `max_conversations` to test your pipeline on a subset first
+2. Use HuggingFace Datasets checkpoint format for efficient storage
+3. Consider batching conversations into multiple analysis runs
+
+```python
+# Test on 100 conversations
+test_conversations = Conversation.from_hf_dataset(
+    "my-org/huge-dataset",
+    max_conversations=100
+)
+
+# Process full dataset once validated
+full_conversations = Conversation.from_hf_dataset(
+    "my-org/huge-dataset"
+)
+```
+
+### Metadata Strategy
+
+Decide what to include in metadata:
+
+- **Static properties**: Model name, language, user type → attach at load time
+- **Computed properties**: Sentiment, complexity, topics → use LLM extractors
+- **Analysis results**: Cluster IDs, scores → added automatically by Kura
+
+## Next Steps
+
+<Card title="Summarization" icon="sparkles" href="/core-concepts/summarization">
+  Learn how conversations are analyzed and summarized
+</Card>

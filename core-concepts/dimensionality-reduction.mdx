@@ -1,0 +1,481 @@
+---
+title: Dimensionality Reduction
+description: Projecting high-dimensional clusters to 2D for visualization with UMAP
+---
+
+## Overview
+
+Dimensionality reduction transforms high-dimensional cluster embeddings (typically 1536 dimensions) into 2D coordinates for visualization. This allows users to explore clusters spatially, where proximity indicates semantic similarity.
+
+Kura uses **UMAP (Uniform Manifold Approximation and Projection)**, which preserves both local and global structure better than alternatives like t-SNE or PCA.
+
+## The ProjectedCluster Model
+
+The output extends the base `Cluster` with 2D coordinates:
+
+```python
+class ProjectedCluster(Cluster):
+    x_coord: float  # X position in 2D space
+    y_coord: float  # Y position in 2D space
+    level: int      # Hierarchy depth (0 = root)
+```
+
+## The HDBUMAP Model
+
+From `kura/dimensionality.py:13-107`:
+
+```python
+from kura.dimensionality import HDBUMAP
+
+dim_model = HDBUMAP(
+    embedding_model=OpenAIEmbeddingModel(),
+    n_components=2,
+    min_dist=0.1,
+    metric="cosine",
+    n_neighbors=None  # Auto: min(15, n_clusters - 1)
+)
+```
+
+### Parameters
+
+- **embedding_model** (BaseEmbeddingModel): Model to re-embed cluster descriptions (default: OpenAI)
+- **n_components** (int): Output dimensions (default: 2, always use 2 for visualization)
+- **min_dist** (float): Minimum distance between points in 2D (0.0-1.0)
+  - Lower = tighter clusters
+  - Higher = more spread out
+  - Default: 0.1
+- **metric** (str): Distance metric for UMAP (default: "cosine")
+  - "cosine": Best for text embeddings
+  - "euclidean": For spatial data
+  - "manhattan": For sparse data
+- **n_neighbors** (int | None): UMAP neighborhood size
+  - Lower = focuses on local structure
+  - Higher = preserves global structure
+  - Default: min(15, n_clusters - 1)
+
+<Tip>
+For conversation analysis, stick with the defaults: `metric="cosine"` and `min_dist=0.1` work well.
+</Tip>
+
+## Basic Usage
+
+From `kura/dimensionality.py:110-161`:
+
+```python
+from kura.dimensionality import reduce_dimensionality_from_clusters, HDBUMAP
+from kura.checkpoints import JSONLCheckpointManager
+
+# Configure dimensionality reduction
+dim_model = HDBUMAP(
+    n_components=2,
+    min_dist=0.1,
+    metric="cosine"
+)
+
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+# Project clusters to 2D
+projected_clusters = await reduce_dimensionality_from_clusters(
+    clusters=meta_clusters,  # From meta-clustering
+    model=dim_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+print(f"Projected {len(projected_clusters)} clusters to 2D")
+for cluster in projected_clusters[:3]:
+    print(f"{cluster.name}: ({cluster.x_coord:.2f}, {cluster.y_coord:.2f})")
+```
+
+### Output Example
+
+```
+Projected 123 clusters to 2D
+Programming Assistance: (12.34, -5.67)
+Debug Python pandas DataFrames: (11.89, -6.12)
+Creative Writing: (-8.45, 10.23)
+```
+
+## The Projection Process
+
+From `kura/dimensionality.py:36-107`:
+
+### Step 1: Re-Embed Clusters
+
+```python
+# Convert cluster name + description to text
+texts_to_embed = [str(c) for c in clusters]
+
+# Embed with the specified model
+cluster_embeddings = await self.embedding_model.embed(texts_to_embed)
+```
+
+This creates a high-dimensional representation of each cluster (typically 1536 dimensions for OpenAI).
+
+### Step 2: UMAP Projection
+
+```python
+from umap import UMAP
+
+# Configure UMAP
+umap_reducer = UMAP(
+    n_components=self.n_components,
+    n_neighbors=n_neighbors_actual,
+    min_dist=self.min_dist,
+    metric=self.metric,
+)
+
+# Project to 2D
+reduced_embeddings = umap_reducer.fit_transform(embeddings)
+```
+
+### Step 3: Calculate Hierarchy Levels
+
+```python
+from kura.utils import calculate_cluster_levels
+
+# Assign level (0 = root, 1 = child, 2 = grandchild, ...)
+projected_clusters = calculate_cluster_levels(projected_clusters)
+```
+
+This traverses the hierarchy and assigns depth levels to each cluster.
+
+## Hierarchy Levels
+
+The `level` field indicates hierarchy depth:
+
+```python
+root_clusters = [c for c in projected_clusters if c.level == 0]
+child_clusters = [c for c in projected_clusters if c.level == 1]
+
+print(f"Root clusters: {len(root_clusters)}")
+print(f"Child clusters: {len(child_clusters)}")
+```
+
+Use this for:
+- Filtering by hierarchy level
+- Coloring clusters by depth
+- Progressive disclosure (show roots first, expand children)
+
+## Visualization Example
+
+Using matplotlib:
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Extract coordinates and levels
+x = [c.x_coord for c in projected_clusters]
+y = [c.y_coord for c in projected_clusters]
+levels = [c.level for c in projected_clusters]
+colors = plt.cm.viridis(np.array(levels) / max(levels))
+
+# Plot
+fig, ax = plt.subplots(figsize=(12, 8))
+scatter = ax.scatter(x, y, c=colors, s=100, alpha=0.6)
+
+# Label root clusters
+root_clusters = [c for c in projected_clusters if c.level == 0]
+for cluster in root_clusters:
+    ax.annotate(
+        cluster.name[:30],  # Truncate long names
+        (cluster.x_coord, cluster.y_coord),
+        fontsize=8,
+        alpha=0.7
+    )
+
+ax.set_xlabel("UMAP Dimension 1")
+ax.set_ylabel("UMAP Dimension 2")
+ax.set_title("Cluster Visualization")
+plt.colorbar(scatter, label="Hierarchy Level")
+plt.tight_layout()
+plt.savefig("cluster_map.png", dpi=300)
+```
+
+## Interactive Visualization with Plotly
+
+```python
+import plotly.graph_objects as go
+
+# Prepare data
+x = [c.x_coord for c in projected_clusters]
+y = [c.y_coord for c in projected_clusters]
+names = [c.name for c in projected_clusters]
+levels = [c.level for c in projected_clusters]
+counts = [c.count for c in projected_clusters]
+
+# Create hover text
+hover_text = [
+    f"<b>{c.name}</b><br>" +
+    f"Conversations: {c.count}<br>" +
+    f"Level: {c.level}<br>" +
+    f"Description: {c.description[:100]}..."
+    for c in projected_clusters
+]
+
+# Create plot
+fig = go.Figure(data=[
+    go.Scatter(
+        x=x,
+        y=y,
+        mode='markers',
+        marker=dict(
+            size=[np.sqrt(c) * 2 for c in counts],  # Size by conversation count
+            color=levels,  # Color by hierarchy level
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="Hierarchy Level"),
+            line=dict(width=1, color='white')
+        ),
+        text=names,
+        hovertext=hover_text,
+        hoverinfo='text'
+    )
+])
+
+fig.update_layout(
+    title="Interactive Cluster Map",
+    xaxis_title="UMAP Dimension 1",
+    yaxis_title="UMAP Dimension 2",
+    hovermode='closest',
+    width=1200,
+    height=800
+)
+
+fig.write_html("cluster_map.html")
+fig.show()
+```
+
+## Tuning UMAP Parameters
+
+### min_dist
+
+Controls how tightly points cluster:
+
+```python
+# Tighter clusters (emphasizes local structure)
+dim_model = HDBUMAP(min_dist=0.0)
+
+# More spread out (emphasizes global structure)
+dim_model = HDBUMAP(min_dist=0.5)
+```
+
+<Accordion title="Visual comparison of min_dist values">
+- **min_dist=0.0**: Clusters are very tight, points within clusters overlap
+- **min_dist=0.1** (default): Balanced spacing, clear cluster boundaries
+- **min_dist=0.5**: Points are spread out, cluster boundaries are fuzzy
+</Accordion>
+
+### n_neighbors
+
+Controls local vs. global structure:
+
+```python
+# Focus on local structure (small neighborhoods)
+dim_model = HDBUMAP(n_neighbors=5)
+
+# Preserve global structure (large neighborhoods)
+dim_model = HDBUMAP(n_neighbors=50)
+```
+
+<Tip>
+For conversation clusters, use `n_neighbors` between 10-30. Lower values emphasize small cluster details, higher values show the overall landscape.
+</Tip>
+
+### metric
+
+Distance function for UMAP:
+
+```python
+# Cosine similarity (best for text embeddings)
+dim_model = HDBUMAP(metric="cosine")  # Default
+
+# Euclidean distance (for spatial data)
+dim_model = HDBUMAP(metric="euclidean")
+
+# Manhattan distance (for high-dimensional sparse data)
+dim_model = HDBUMAP(metric="manhattan")
+```
+
+## Performance Considerations
+
+### Embedding Speed
+
+Use local models for faster projection:
+
+```python
+from kura.embedding import SentenceTransformerEmbeddingModel
+
+dim_model = HDBUMAP(
+    embedding_model=SentenceTransformerEmbeddingModel(
+        model_name="all-MiniLM-L6-v2",
+        device="cuda"  # GPU acceleration
+    )
+)
+```
+
+### UMAP Performance
+
+UMAP scales to thousands of points efficiently:
+
+- 100 clusters: < 1 second
+- 1,000 clusters: ~5 seconds
+- 10,000 clusters: ~1 minute
+
+For very large datasets, consider:
+- Projecting only root clusters
+- Sampling clusters for preview
+- Using approximate UMAP variants
+
+### Checkpointing
+
+```python
+# First run: computes projection
+projected = await reduce_dimensionality_from_clusters(
+    clusters=meta_clusters,
+    model=dim_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Second run: loads from checkpoint
+projected = await reduce_dimensionality_from_clusters(
+    clusters=meta_clusters,
+    model=dim_model,
+    checkpoint_manager=checkpoint_mgr
+)
+```
+
+Checkpoint file: `dimensionality.jsonl` (or format-specific)
+
+## Common Issues
+
+<Accordion title="Clusters overlap too much">
+Increase `min_dist` or reduce `n_neighbors`:
+
+```python
+dim_model = HDBUMAP(min_dist=0.2, n_neighbors=10)
+```
+</Accordion>
+
+<Accordion title="Clusters are too spread out">
+Decrease `min_dist` or increase `n_neighbors`:
+
+```python
+dim_model = HDBUMAP(min_dist=0.0, n_neighbors=30)
+```
+</Accordion>
+
+<Accordion title="Projection doesn't capture hierarchy">
+UMAP projects based on semantic similarity, not hierarchy. Use the `level` field to color/filter by hierarchy level instead.
+</Accordion>
+
+<Accordion title="UMAP is slow">
+Use GPU-accelerated embeddings:
+
+```python
+from kura.embedding import SentenceTransformerEmbeddingModel
+
+dim_model = HDBUMAP(
+    embedding_model=SentenceTransformerEmbeddingModel(device="cuda")
+)
+```
+</Accordion>
+
+## Alternative: t-SNE or PCA
+
+While Kura defaults to UMAP, you can implement alternatives:
+
+```python
+from kura.base_classes import BaseDimensionalityReduction
+from sklearn.manifold import TSNE
+
+class TSNEReduction(BaseDimensionalityReduction):
+    @property
+    def checkpoint_filename(self) -> str:
+        return "dimensionality_tsne"
+    
+    async def reduce_dimensionality(self, clusters):
+        # Similar to HDBUMAP but use TSNE instead
+        embeddings = await self.embedding_model.embed([str(c) for c in clusters])
+        tsne = TSNE(n_components=2, perplexity=30)
+        reduced = tsne.fit_transform(embeddings)
+        # ... create ProjectedCluster objects
+```
+
+## Best Practices
+
+### 1. Visualize After Meta-Clustering
+
+Project the final hierarchical clusters, not base clusters:
+
+```python
+# Base clusters (too many to visualize clearly)
+base_clusters = await generate_base_clusters_from_conversation_summaries(...)
+
+# Meta-clusters (reduced to manageable number)
+meta_clusters = await reduce_clusters_from_base_clusters(...)
+
+# Project meta-clusters for visualization
+projected = await reduce_dimensionality_from_clusters(
+    clusters=meta_clusters,  # Use meta-clusters, not base
+    model=dim_model
+)
+```
+
+### 2. Use Hierarchy Levels for Filtering
+
+```python
+# Show only root clusters initially
+root_clusters = [c for c in projected_clusters if c.level == 0]
+
+# Expand to show children on click
+def get_children(cluster_id: str):
+    return [c for c in projected_clusters if c.parent_id == cluster_id]
+```
+
+### 3. Size Points by Conversation Count
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+sizes = [np.sqrt(c.count) * 10 for c in projected_clusters]
+plt.scatter(
+    [c.x_coord for c in projected_clusters],
+    [c.y_coord for c in projected_clusters],
+    s=sizes,  # Size by conversation count
+    alpha=0.6
+)
+```
+
+### 4. Color by Metadata
+
+Use custom metadata for coloring:
+
+```python
+# Color by concerning_score average
+concern_scores = [
+    np.mean([s.concerning_score for s in summaries if s.chat_id in c.chat_ids])
+    for c in projected_clusters
+]
+
+plt.scatter(
+    [c.x_coord for c in projected_clusters],
+    [c.y_coord for c in projected_clusters],
+    c=concern_scores,
+    cmap='RdYlGn_r',  # Red = high concern, Green = low
+    s=100
+)
+plt.colorbar(label="Average Concerning Score")
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Checkpoints" icon="floppy-disk" href="/core-concepts/checkpoints">
+    Learn how Kura saves intermediate results for efficiency
+  </Card>
+  <Card title="Pipeline Overview" icon="sitemap" href="/core-concepts/overview">
+    Review the complete pipeline architecture
+  </Card>
+</CardGroup>

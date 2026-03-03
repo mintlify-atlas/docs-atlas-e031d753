@@ -1,0 +1,328 @@
+---
+title: 'Cache'
+description: 'Disk-based caching system for expensive operations'
+---
+
+## Overview
+
+Kura provides a caching system to avoid recomputing expensive operations like LLM summarizations. The caching system uses a strategy pattern for flexibility.
+
+## DiskCacheStrategy
+
+Disk-based caching implementation using the `diskcache` library.
+
+```python
+from kura.cache import DiskCacheStrategy
+
+cache = DiskCacheStrategy(cache_dir="./.cache/kura")
+```
+
+<ParamField path="cache_dir" type="str" required>
+  Directory path for cache storage. Created automatically if it doesn't exist.
+</ParamField>
+
+### Methods
+
+<ResponseField name="get" type="Optional[Any]">
+  Retrieve a value from the disk cache.
+  
+  **Parameters:**
+  - `key` (str): Cache key to retrieve
+  
+  **Returns:** Cached value if it exists, None otherwise
+</ResponseField>
+
+<ResponseField name="set" type="None">
+  Store a value in the disk cache.
+  
+  **Parameters:**
+  - `key` (str): Cache key for storage
+  - `value` (Any): Value to cache (must be serializable)
+</ResponseField>
+
+### Example Usage
+
+```python
+from kura.cache import DiskCacheStrategy
+
+# Initialize cache
+cache = DiskCacheStrategy("./.cache/summaries")
+
+# Store data
+cache.set("conversation_123", {"summary": "User asks about Python"})
+
+# Retrieve data
+result = cache.get("conversation_123")
+if result:
+    print("Cache hit:", result)
+else:
+    print("Cache miss - compute and cache")
+    result = expensive_computation()
+    cache.set("conversation_123", result)
+```
+
+## Integration with Summarization
+
+The caching system integrates seamlessly with the summarization model:
+
+```python
+from kura.summarisation import SummaryModel
+from kura.cache import DiskCacheStrategy
+
+# Create cache strategy
+cache = DiskCacheStrategy("./.cache/summaries")
+
+# Use with summary model
+summary_model = SummaryModel(
+    model="gpt-4o-mini",
+    cache_strategy=cache
+)
+
+# Summaries are automatically cached
+summaries = await summary_model.summarise_conversations(conversations)
+# Second call uses cached results
+summaries = await summary_model.summarise_conversations(conversations)
+```
+
+## Base Class
+
+### CacheStrategy
+
+Abstract base class for implementing custom caching strategies.
+
+```python
+from kura.base_classes.cache import CacheStrategy
+from typing import Any, Optional
+
+class CustomCacheStrategy(CacheStrategy):
+    def get(self, key: str) -> Optional[Any]:
+        # Implement retrieval logic
+        pass
+    
+    def set(self, key: str, value: Any) -> None:
+        # Implement storage logic
+        pass
+```
+
+### Example: Redis Cache Strategy
+
+```python
+from kura.base_classes.cache import CacheStrategy
+from typing import Any, Optional
+import redis
+import pickle
+
+class RedisCacheStrategy(CacheStrategy):
+    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0):
+        self.client = redis.Redis(host=host, port=port, db=db)
+    
+    def get(self, key: str) -> Optional[Any]:
+        value = self.client.get(key)
+        if value:
+            return pickle.loads(value)
+        return None
+    
+    def set(self, key: str, value: Any) -> None:
+        self.client.set(key, pickle.dumps(value))
+
+# Use custom cache
+redis_cache = RedisCacheStrategy()
+summary_model = SummaryModel(
+    model="gpt-4o-mini",
+    cache_strategy=redis_cache
+)
+```
+
+## Cache Keys
+
+Cache keys are automatically generated based on:
+
+- Conversation ID
+- Model configuration
+- Prompt template
+- Extractor functions (if used)
+
+This ensures that changes to any of these parameters result in cache misses, preventing stale data.
+
+```python
+# Cache key generation (internal)
+def generate_cache_key(
+    conversation_id: str,
+    model: str,
+    prompt_hash: str
+) -> str:
+    return f"{conversation_id}:{model}:{prompt_hash}"
+```
+
+## Cache Management
+
+### Manual Cache Operations
+
+```python
+from kura.cache import DiskCacheStrategy
+
+cache = DiskCacheStrategy("./.cache/kura")
+
+# Check if key exists
+if cache.get("key") is not None:
+    print("Key exists in cache")
+
+# Clear specific key (via diskcache)
+from diskcache import Cache
+disk_cache = Cache("./.cache/kura")
+disk_cache.delete("key")
+
+# Clear all cache
+disk_cache.clear()
+
+# Get cache statistics
+print(f"Size: {disk_cache.volume()}")
+print(f"Items: {len(disk_cache)}")
+```
+
+### Cache Eviction
+
+The `diskcache` library handles cache eviction automatically based on:
+
+- **Size limits**: Configure maximum cache size
+- **TTL**: Set time-to-live for entries
+- **LRU**: Least recently used eviction policy
+
+```python
+from diskcache import Cache
+
+# Configure cache with limits
+cache = Cache(
+    "./.cache/kura",
+    size_limit=10 * 1024**3,  # 10 GB
+    eviction_policy="least-recently-used"
+)
+
+# Wrap in strategy
+from kura.cache import DiskCacheStrategy
+strategy = DiskCacheStrategy("./.cache/kura")
+strategy.cache = cache  # Replace with configured cache
+```
+
+## Performance Benefits
+
+### Without Caching
+
+```python
+# First run: 100 conversations × 2 seconds/LLM call = 200 seconds
+summaries = await summary_model.summarise_conversations(conversations)
+
+# Second run: Another 200 seconds
+summaries = await summary_model.summarise_conversations(conversations)
+```
+
+### With Caching
+
+```python
+# First run: 100 conversations × 2 seconds/LLM call = 200 seconds
+summaries = await summary_model.summarise_conversations(conversations)
+
+# Second run: < 1 second (all cached)
+summaries = await summary_model.summarise_conversations(conversations)
+```
+
+<Info>
+  Caching can reduce processing time by **99%+** for repeated operations on the same data.
+</Info>
+
+## Best Practices
+
+<Check>
+  **Always use caching** when working with LLM-based summarization to avoid unnecessary API costs and latency.
+</Check>
+
+<Check>
+  **Use separate cache directories** for different projects or experiments to prevent key collisions.
+</Check>
+
+<Check>
+  **Monitor cache size** to ensure it doesn't consume excessive disk space. Configure size limits for long-running projects.
+</Check>
+
+<Check>
+  **Clear cache when changing** model configuration, prompts, or extractor functions to ensure results reflect your changes.
+</Check>
+
+<Warning>
+  Cache keys include model configuration. Changing the model or prompt will result in cache misses, which is expected behavior.
+</Warning>
+
+## Configuration
+
+### Via Environment Variables
+
+```bash
+# Set cache directory
+export KURA_CACHE_DIR="./.cache/kura"
+```
+
+### In Code
+
+```python
+from kura.cache import DiskCacheStrategy
+from kura.summarisation import SummaryModel
+import os
+
+# Use environment variable or default
+cache_dir = os.getenv("KURA_CACHE_DIR", "./.cache/kura")
+cache = DiskCacheStrategy(cache_dir)
+
+summary_model = SummaryModel(
+    model="gpt-4o-mini",
+    cache_strategy=cache
+)
+```
+
+## Troubleshooting
+
+### Cache Not Working
+
+```python
+# Verify cache is enabled
+print(summary_model.cache_strategy)  # Should not be None
+
+# Check cache directory
+import os
+print(os.path.exists("./.cache/kura"))  # Should be True
+
+# Test cache directly
+from kura.cache import DiskCacheStrategy
+cache = DiskCacheStrategy("./.cache/test")
+cache.set("test_key", "test_value")
+print(cache.get("test_key"))  # Should print: test_value
+```
+
+### Stale Cache Data
+
+```python
+# Clear cache when configuration changes
+from diskcache import Cache
+cache = Cache("./.cache/kura")
+cache.clear()
+
+# Or delete specific keys
+for key in cache.iterkeys():
+    if "old_model" in key:
+        cache.delete(key)
+```
+
+### Disk Space Issues
+
+```python
+# Check cache size
+from diskcache import Cache
+cache = Cache("./.cache/kura")
+size_mb = cache.volume() / (1024 ** 2)
+print(f"Cache size: {size_mb:.2f} MB")
+
+# Configure size limit
+cache = Cache(
+    "./.cache/kura",
+    size_limit=5 * 1024**3  # 5 GB limit
+)
+```

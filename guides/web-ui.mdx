@@ -1,0 +1,510 @@
+---
+title: Web UI
+description: Use the built-in web interface to explore clusters interactively
+---
+
+Kura includes a built-in web interface that provides an interactive way to explore your conversation clusters. This guide shows you how to start and use the web UI.
+
+## Starting the Web UI
+
+The web UI is launched using the `kura start-app` command.
+
+### Basic Usage
+
+Start the server with default settings:
+
+```bash
+kura start-app
+```
+
+This will:
+- Use `./checkpoints` directory for checkpoint files
+- Use JSONL format (legacy)
+- Start server at http://localhost:8000
+
+### With Custom Checkpoint Directory
+
+Specify a different checkpoint directory:
+
+```bash
+kura start-app --dir ./my-checkpoints
+```
+
+### With HuggingFace Datasets Format
+
+For better performance with large datasets:
+
+```bash
+kura start-app --checkpoint-format hf-dataset
+```
+
+Recommended for:
+- Datasets > 100MB
+- Production deployments
+- Datasets with 10,000+ conversations
+
+## CLI Implementation
+
+The CLI is implemented in kura/cli/cli.py:10-30:
+
+```python
+import typer
+import uvicorn
+from kura.cli.server import api
+from rich import print
+import os
+
+app = typer.Typer()
+
+@app.command()
+def start_app(
+    dir: str = typer.Option(
+        "./checkpoints",
+        help="Directory to use for checkpoints, relative to the current directory",
+    ),
+    checkpoint_format: str = typer.Option(
+        "jsonl",
+        help="Checkpoint format to use: 'jsonl' (default, legacy) or 'hf-dataset' (new, recommended for large datasets)",
+    ),
+):
+    """Start the FastAPI server"""
+    os.environ["KURA_CHECKPOINT_DIR"] = dir
+    os.environ["KURA_CHECKPOINT_FORMAT"] = checkpoint_format
+    print(
+        f"\n[bold green]🚀 Starting Kura with {checkpoint_format} checkpoints at {dir}[/bold green]"
+    )
+    print(
+        "[bold blue]Access website at[/bold blue] [bold cyan][http://localhost:8000](http://localhost:8000)[/bold cyan]\n"
+    )
+    uvicorn.run(api, host="0.0.0.0", port=8000)
+```
+
+## Preparing Your Checkpoints
+
+Before starting the web UI, you need to generate checkpoints by running your analysis pipeline.
+
+<Steps>
+
+### Run Your Analysis Pipeline
+
+```python
+from kura.v1 import (
+    summarise_conversations,
+    generate_base_clusters_from_conversation_summaries,
+    generate_meta_clusters,
+    CheckpointManager
+)
+from kura.types import Conversation
+from kura.summarisation import SummaryModel
+from kura.cluster import ClusterDescriptionModel
+
+# Load conversations
+conversations = Conversation.from_hf_dataset(
+    "ivanleomk/synthetic-gemini-conversations",
+    max_conversations=1000
+)
+
+# Set up checkpoint manager
+checkpoint_mgr = CheckpointManager("./checkpoints")
+
+# Run pipeline
+summary_model = SummaryModel()
+summaries = await summarise_conversations(
+    conversations,
+    model=summary_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+cluster_model = ClusterDescriptionModel()
+base_clusters = await generate_base_clusters_from_conversation_summaries(
+    summaries,
+    clustering_model=cluster_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+meta_clusters = await generate_meta_clusters(
+    base_clusters,
+    max_clusters=20,
+    checkpoint_manager=checkpoint_mgr
+)
+```
+
+### Verify Checkpoints
+
+Check that checkpoint files were created:
+
+```bash
+ls -lh ./checkpoints/
+```
+
+You should see:
+```
+summaries.jsonl
+clusters.jsonl
+meta_clusters.jsonl
+```
+
+### Start the Web UI
+
+```bash
+kura start-app --dir ./checkpoints
+```
+
+### Access the Interface
+
+Open your browser to:
+```
+http://localhost:8000
+```
+
+</Steps>
+
+## Using Environment Variables
+
+You can configure the web UI using environment variables:
+
+```bash
+# Set checkpoint directory
+export KURA_CHECKPOINT_DIR=./my-checkpoints
+
+# Set checkpoint format
+export KURA_CHECKPOINT_FORMAT=hf-dataset
+
+# Start server
+kura start-app
+```
+
+## Server Configuration
+
+The server is implemented using FastAPI (from kura/cli/server.py:1-29):
+
+```python
+from fastapi import FastAPI, staticfiles
+from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+
+api = FastAPI()
+
+# Configure CORS
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+# Serve static files from web/dist
+web_dir = Path(__file__).parent.parent / "static" / "dist"
+if not web_dir.exists():
+    raise FileNotFoundError(f"Static files directory not found: {web_dir}")
+
+# Mount static files at root
+api.mount("/", staticfiles.StaticFiles(directory=str(web_dir), html=True))
+```
+
+## Web UI Features
+
+The web interface provides several interactive features:
+
+### Cluster Map
+
+Visual representation of clusters in 2D space using dimensionality reduction.
+
+### Cluster Tree
+
+Hierarchical tree view showing parent-child relationships between clusters.
+
+### Cluster Details
+
+Detailed information about each cluster:
+- Cluster name and description
+- Number of conversations
+- Sample conversations
+- Metadata statistics
+
+### Conversation Dialog
+
+View individual conversations within clusters:
+- Full message history
+- Metadata
+- Timestamps
+
+### Upload Form
+
+Upload new conversation datasets for analysis.
+
+## Running in Production
+
+For production deployments, consider these settings:
+
+### Use Gunicorn
+
+```bash
+gunicorn kura.cli.server:api \
+  --workers 4 \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000
+```
+
+### Use HuggingFace Datasets Format
+
+```bash
+export KURA_CHECKPOINT_FORMAT=hf-dataset
+kura start-app
+```
+
+Benefits:
+- 10-100x faster loading
+- 50-80% smaller storage
+- Memory-mapped access
+- Streaming support
+
+### Configure Reverse Proxy
+
+Nginx configuration:
+
+```nginx
+server {
+    listen 80;
+    server_name kura.yourdomain.com;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Enable HTTPS
+
+Using Let's Encrypt:
+
+```bash
+sudo certbot --nginx -d kura.yourdomain.com
+```
+
+## Docker Deployment
+
+Create a Dockerfile:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install uv
+COPY pyproject.toml .
+RUN uv pip install --system -e .
+
+# Copy checkpoint files
+COPY checkpoints/ /app/checkpoints/
+
+# Expose port
+EXPOSE 8000
+
+# Start server
+CMD ["kura", "start-app", "--dir", "/app/checkpoints"]
+```
+
+Build and run:
+
+```bash
+# Build image
+docker build -t kura-app .
+
+# Run container
+docker run -p 8000:8000 -v $(pwd)/checkpoints:/app/checkpoints kura-app
+```
+
+With Docker Compose:
+
+```yaml
+version: '3.8'
+
+services:
+  kura:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./checkpoints:/app/checkpoints
+    environment:
+      - KURA_CHECKPOINT_FORMAT=hf-dataset
+    restart: unless-stopped
+```
+
+## Customizing the UI
+
+The UI is built with React and TypeScript. To customize:
+
+<Steps>
+
+### Navigate to UI Directory
+
+```bash
+cd ui
+```
+
+### Install Dependencies
+
+```bash
+npm install
+```
+
+### Start Development Server
+
+```bash
+npm run dev
+```
+
+### Build for Production
+
+```bash
+npm run build
+```
+
+This creates a production build in `ui/dist/` which is served by the FastAPI server.
+
+</Steps>
+
+## API Endpoints
+
+The web UI communicates with these API endpoints:
+
+### GET /api/clusters
+
+Retrieve all clusters:
+
+```javascript
+fetch('http://localhost:8000/api/clusters')
+  .then(res => res.json())
+  .then(data => console.log(data))
+```
+
+### GET /api/conversations
+
+Retrieve conversations for a specific cluster:
+
+```javascript
+fetch('http://localhost:8000/api/conversations?cluster_id=abc123')
+  .then(res => res.json())
+  .then(data => console.log(data))
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+If port 8000 is already in use:
+
+```bash
+# Find process using port 8000
+lsof -i :8000
+
+# Kill the process
+kill -9 <PID>
+
+# Or use a different port
+# (requires modifying the CLI code)
+```
+
+### Static Files Not Found
+
+```
+FileNotFoundError: Static files directory not found
+```
+
+Build the UI first:
+
+```bash
+cd ui
+npm install
+npm run build
+cd ..
+kura start-app
+```
+
+### Checkpoint Files Not Loading
+
+Ensure checkpoints exist:
+
+```bash
+ls -la ./checkpoints/
+```
+
+If missing, run your analysis pipeline to generate them.
+
+### CORS Errors
+
+The server is configured to allow all origins by default. If you're still seeing CORS errors, check that:
+
+1. The server is running
+2. You're accessing the correct URL
+3. No browser extensions are blocking requests
+
+### Slow Loading with Large Datasets
+
+Switch to HuggingFace datasets format:
+
+```bash
+# Migrate existing checkpoints
+kura migrate-checkpoints ./checkpoints ./hf_checkpoints
+
+# Start with HF format
+kura start-app --dir ./hf_checkpoints --checkpoint-format hf-dataset
+```
+
+## Best Practices
+
+<Steps>
+
+### Use HF Datasets for Large Datasets
+
+For 10,000+ conversations:
+
+```bash
+kura start-app --checkpoint-format hf-dataset
+```
+
+### Keep Checkpoints Updated
+
+Re-run your pipeline when data changes:
+
+```python
+# Update checkpoints
+summaries = await summarise_conversations(...)
+meta_clusters = await generate_meta_clusters(...)
+
+# Restart server to see changes
+```
+
+### Monitor Resource Usage
+
+Check memory and CPU:
+
+```bash
+# Monitor server process
+top -p $(pgrep -f "kura start-app")
+```
+
+### Secure Production Deployments
+
+For production:
+- Use HTTPS
+- Add authentication
+- Restrict CORS origins
+- Use environment variables for secrets
+
+</Steps>
+
+## Next Steps
+
+- Learn about [data loading](./data-loading) options
+- Explore [custom models](./custom-models) for your use case
+- Set up [caching](./caching) for better performance
+- Try [visualization](./visualization) in the terminal

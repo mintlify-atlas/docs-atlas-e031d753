@@ -1,0 +1,446 @@
+---
+title: Hierarchical Meta-Clustering
+description: Organizing base clusters into multi-level hierarchies
+---
+
+## Overview
+
+Meta-clustering takes base clusters and recursively combines them into a hierarchy. This creates a tree structure where:
+
+- **Root clusters** (parents) are broad categories (e.g., "Programming assistance")
+- **Child clusters** are specific subtypes (e.g., "Debug Python pandas DataFrames")
+
+This allows navigation from high-level themes down to specific conversation patterns.
+
+## The Meta-Clustering Process
+
+From `kura/meta_cluster.py:616-677`, the main function:
+
+```python
+async def reduce_clusters_from_base_clusters(
+    clusters: list[Cluster],
+    *,
+    model: BaseMetaClusterModel,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+) -> list[Cluster]
+```
+
+### Steps
+
+1. **Generate candidate parents** → LLM proposes broader category names
+2. **Assign clusters to parents** → LLM labels each cluster with a parent
+3. **Generate parent descriptions** → LLM creates names/descriptions for parents
+4. **Repeat** → Continue until root cluster count ≤ `max_clusters`
+
+### Iterative Reduction
+
+From `kura/meta_cluster.py:730-744`:
+
+```python
+root_clusters = clusters.copy()
+
+while len(root_clusters) > max_clusters:
+    # Embed root clusters
+    # Cluster them
+    # Generate parent clusters for each group
+    # Update root_clusters to be the new parents
+    
+    new_current_level = await model.reduce_clusters(root_clusters)
+    root_clusters = [c for c in new_current_level if c.parent_id is None]
+    all_clusters.extend(new_current_level)
+```
+
+This continues until the desired number of root clusters is reached.
+
+## MetaClusterModel
+
+From `kura/meta_cluster.py:79-120`:
+
+```python
+from kura.meta_cluster import MetaClusterModel
+
+meta_model = MetaClusterModel(
+    max_concurrent_requests=50,
+    model="openai/gpt-4o-mini",
+    embedding_model=None,  # Defaults to OpenAIEmbeddingModel
+    clustering_model=None,  # Defaults to KmeansClusteringModel(12)
+    max_clusters=10,  # Target number of root clusters
+    console=console  # Optional Rich console
+)
+```
+
+### Parameters
+
+- **max_concurrent_requests** (int): Parallel LLM calls (default: 50)
+- **model** (str): LLM identifier (default: "openai/gpt-4o-mini")
+- **embedding_model** (BaseEmbeddingModel | None): For re-embedding clusters (defaults to OpenAI)
+- **clustering_model** (BaseClusteringMethod | None): For grouping clusters (defaults to K-means with 12 per group)
+- **max_clusters** (int): Target number of root clusters (default: 10)
+- **console** (Console | None): Rich console for progress tracking
+
+<Note>
+**Important:** `max_clusters` lives in `MetaClusterModel`, not in the main `Kura` class (as of recent refactoring).
+</Note>
+
+## Step 1: Generate Candidate Clusters
+
+From `kura/meta_cluster.py:282-324`, the LLM proposes parent categories:
+
+```python
+async def generate_candidate_clusters(
+    self, clusters: list[Cluster], sem: Semaphore
+) -> list[str]:
+    # Prompt: "Create higher-level cluster names that could encompass 
+    #          one or more of the provided clusters"
+    
+    resp = await self.client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        response_model=CandidateClusters,
+        context={"clusters": clusters, "desired_number": ceil(len(clusters) / 2)}
+    )
+    return resp.candidate_cluster_names
+```
+
+### Example
+
+Input clusters:
+- "Debug Python pandas DataFrame indexing"
+- "Explain Python list comprehensions"
+- "Fix React component state management"
+- "Debug TypeScript type errors"
+
+Generated candidates:
+- "Troubleshoot programming errors"
+- "Explain programming concepts"
+- "Debug frontend frameworks"
+
+## Step 2: Assign Clusters to Parents
+
+From `kura/meta_cluster.py:326-384`, each cluster is labeled:
+
+```python
+async def label_cluster(
+    self, cluster: Cluster, candidate_clusters: list[str]
+):
+    # Prompt: "Categorize this cluster into one of the provided 
+    #          higher-level clusters"
+    
+    resp = await self.client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        response_model=ClusterLabel,
+        context={
+            "cluster": cluster,
+            "candidate_clusters": candidate_clusters
+        }
+    )
+    return {"cluster": cluster, "label": resp.higher_level_cluster}
+```
+
+### Fuzzy Matching
+
+The LLM's response is validated with fuzzy matching (90% similarity threshold):
+
+```python
+from thefuzz import fuzz
+
+# If LLM returns a close but not exact match, accept it
+for candidate in candidate_clusters:
+    similarity = fuzz.ratio(llm_response, candidate)
+    if similarity >= 90:
+        return candidate  # Accept the match
+```
+
+This handles small variations like:
+- "Troubleshoot programming errors" vs "Troubleshoot Programming Errors"
+- "Debug frontend frameworks" vs "Debug front-end frameworks"
+
+## Step 3: Generate Parent Descriptions
+
+From `kura/meta_cluster.py:386-444`, parent clusters are named:
+
+```python
+async def rename_cluster_group(self, clusters: list[Cluster]) -> list[Cluster]:
+    # Prompt: "Summarize this group of cluster names into a short, 
+    #          precise description and name"
+    
+    resp = await self.client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        response_model=GeneratedCluster,
+        context={"clusters": clusters}
+    )
+    
+    # Create parent cluster
+    parent = Cluster(
+        name=resp.name,
+        description=resp.summary,
+        slug=resp.slug,
+        chat_ids=[id for c in clusters for id in c.chat_ids],
+        parent_id=None
+    )
+    
+    # Update children to point to parent
+    children = [
+        Cluster(..., parent_id=parent.id)
+        for cluster in clusters
+    ]
+    
+    return [parent, *children]
+```
+
+## Complete Example
+
+```python
+from kura.meta_cluster import reduce_clusters_from_base_clusters, MetaClusterModel
+from kura.checkpoints import JSONLCheckpointManager
+from rich.console import Console
+
+# Configure meta-clustering
+console = Console()
+
+meta_model = MetaClusterModel(
+    model="openai/gpt-4o-mini",
+    max_concurrent_requests=50,
+    max_clusters=8,  # Reduce to 8 root clusters
+    console=console
+)
+
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+# Reduce base clusters to hierarchy
+meta_clusters = await reduce_clusters_from_base_clusters(
+    clusters=base_clusters,  # e.g., 100 base clusters
+    model=meta_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+print(f"Total clusters: {len(meta_clusters)}")
+print(f"Root clusters: {len([c for c in meta_clusters if c.parent_id is None])}")
+
+# Print hierarchy
+root_clusters = [c for c in meta_clusters if c.parent_id is None]
+for root in root_clusters:
+    print(f"\n{root.name} ({root.count} conversations)")
+    children = [c for c in meta_clusters if c.parent_id == root.id]
+    for child in children:
+        print(f"  └─ {child.name} ({child.count})")
+```
+
+### Example Output
+
+```
+Total clusters: 123
+Root clusters: 8
+
+Programming Assistance (523 conversations)
+  └─ Debug Python pandas DataFrames (87)
+  └─ Explain Python concepts (64)
+  └─ Fix JavaScript errors (52)
+  └─ Write SQL queries (45)
+
+Creative Writing (312 conversations)
+  └─ Write fiction stories (123)
+  └─ Draft blog posts (98)
+  └─ Compose poetry (91)
+
+...
+```
+
+## Rich Console Progress
+
+From `kura/meta_cluster.py:446-577`, the console shows:
+
+- Progress bar for each stage (labeling, renaming)
+- Live preview of latest 3 meta-clusters
+- Hierarchical structure as it's built
+
+```python
+meta_model = MetaClusterModel(
+    model="openai/gpt-4o-mini",
+    console=Console()
+)
+
+# Displays:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% | ETA: 0:00:00
+# 
+# Recent Meta Clusters (3/3)
+# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ Meta Cluster: Programming Assistance                  ┃
+# ┃ Description: Users requested help with programming... ┃
+# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+## Controlling Hierarchy Depth
+
+### Max Clusters Parameter
+
+The `max_clusters` parameter determines when to stop:
+
+```python
+# More root clusters = shallower hierarchy
+meta_model = MetaClusterModel(max_clusters=20)  # 100 → 20 → done
+
+# Fewer root clusters = deeper hierarchy
+meta_model = MetaClusterModel(max_clusters=5)   # 100 → 20 → 5 → done
+```
+
+### Clustering Per Iteration
+
+The `clustering_model` determines grouping size:
+
+```python
+from kura.cluster import KmeansClusteringModel
+
+# Aggressive reduction (12 clusters per group)
+meta_model = MetaClusterModel(
+    clustering_model=KmeansClusteringModel(clusters_per_group=12)
+)
+
+# Gentle reduction (5 clusters per group)
+meta_model = MetaClusterModel(
+    clustering_model=KmeansClusteringModel(clusters_per_group=5)
+)
+```
+
+## Checkpointing
+
+Meta-clusters are automatically checkpointed:
+
+```python
+# First run: generates hierarchy
+meta_clusters = await reduce_clusters_from_base_clusters(
+    clusters=base_clusters,
+    model=meta_model,
+    checkpoint_manager=checkpoint_mgr
+)
+
+# Second run: loads from checkpoint
+meta_clusters = await reduce_clusters_from_base_clusters(
+    clusters=base_clusters,
+    model=meta_model,
+    checkpoint_manager=checkpoint_mgr
+)
+```
+
+Checkpoint file: `meta_clusters.jsonl` (or format-specific extension)
+
+## Performance Considerations
+
+### LLM Calls
+
+Each iteration makes LLM calls for:
+1. Generating candidates (1 call per group)
+2. Labeling clusters (1 call per cluster)
+3. Renaming groups (1 call per group)
+
+For 100 base clusters → 10 root clusters:
+- Iteration 1: ~120 LLM calls
+- Iteration 2: ~25 LLM calls
+- Total: ~145 calls ≈ $0.15 with gpt-4o-mini
+
+### Speed Optimization
+
+```python
+# Use more concurrent requests
+meta_model = MetaClusterModel(
+    max_concurrent_requests=100  # Default is 50
+)
+
+# Use faster embedding model
+from kura.embedding import SentenceTransformerEmbeddingModel
+
+meta_model = MetaClusterModel(
+    embedding_model=SentenceTransformerEmbeddingModel(
+        model_name="all-MiniLM-L6-v2",
+        device="cuda"
+    )
+)
+```
+
+## Hierarchy Traversal
+
+Navigate the cluster tree:
+
+```python
+def get_children(cluster_id: str, all_clusters: list[Cluster]) -> list[Cluster]:
+    return [c for c in all_clusters if c.parent_id == cluster_id]
+
+def get_root_clusters(all_clusters: list[Cluster]) -> list[Cluster]:
+    return [c for c in all_clusters if c.parent_id is None]
+
+def get_leaf_clusters(all_clusters: list[Cluster]) -> list[Cluster]:
+    cluster_ids = {c.id for c in all_clusters}
+    parent_ids = {c.parent_id for c in all_clusters if c.parent_id}
+    leaf_ids = cluster_ids - parent_ids
+    return [c for c in all_clusters if c.id in leaf_ids]
+
+# Get all conversations under a cluster (including descendants)
+def get_all_conversations(cluster: Cluster, all_clusters: list[Cluster]) -> set[str]:
+    chat_ids = set(cluster.chat_ids)
+    for child in get_children(cluster.id, all_clusters):
+        chat_ids.update(get_all_conversations(child, all_clusters))
+    return chat_ids
+```
+
+## Best Practices
+
+### 1. Start with Quality Base Clusters
+
+Meta-clustering quality depends on base cluster quality:
+
+```python
+# Use descriptive base clustering
+base_clustering_model = ClusterDescriptionModel(
+    model="openai/gpt-4o",  # Higher quality than gpt-4o-mini
+    temperature=0.2
+)
+```
+
+### 2. Tune max_clusters
+
+Experiment on subsets:
+
+```python
+# Test with different max_clusters values
+for max_c in [5, 10, 15, 20]:
+    meta_model = MetaClusterModel(max_clusters=max_c)
+    meta_clusters = await reduce_clusters_from_base_clusters(
+        clusters=base_clusters[:50],  # Subset for testing
+        model=meta_model
+    )
+    print(f"max_clusters={max_c}: {len([c for c in meta_clusters if c.parent_id is None])} roots")
+```
+
+### 3. Monitor Hierarchy Depth
+
+Check the depth of your hierarchy:
+
+```python
+def get_depth(cluster: Cluster, all_clusters: list[Cluster]) -> int:
+    if cluster.parent_id is None:
+        return 0
+    parent = next(c for c in all_clusters if c.id == cluster.parent_id)
+    return 1 + get_depth(parent, all_clusters)
+
+max_depth = max(get_depth(c, meta_clusters) for c in meta_clusters)
+print(f"Hierarchy depth: {max_depth}")
+```
+
+### 4. Use Checkpoints
+
+Always use checkpointing to avoid regenerating hierarchies:
+
+```python
+checkpoint_mgr = JSONLCheckpointManager("./checkpoints")
+
+meta_clusters = await reduce_clusters_from_base_clusters(
+    clusters=base_clusters,
+    model=meta_model,
+    checkpoint_manager=checkpoint_mgr  # Essential
+)
+```
+
+## Next Steps
+
+<Card title="Dimensionality Reduction" icon="chart-scatter" href="/core-concepts/dimensionality-reduction">
+  Project your cluster hierarchy to 2D for interactive visualization
+</Card>

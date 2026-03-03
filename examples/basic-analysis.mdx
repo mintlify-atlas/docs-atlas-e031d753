@@ -1,0 +1,364 @@
+---
+title: 'Basic Analysis'
+description: 'Complete walkthrough of analyzing conversations from start to finish'
+icon: 'play'
+---
+
+This guide walks you through analyzing conversations with Kura from loading data to visualizing results. You'll learn the complete workflow using real code that runs out of the box.
+
+## Overview
+
+In this example, we'll:
+1. Load 190 conversations from HuggingFace
+2. Generate summaries using AI
+3. Cluster similar conversations
+4. Organize clusters hierarchically
+5. Visualize the results
+
+**Expected Output**: 20-30 topic clusters in under 30 seconds (with caching).
+
+## Complete Working Example
+
+```python basic_analysis.py
+import asyncio
+from rich.console import Console
+from kura.cache import DiskCacheStrategy
+from kura.summarisation import summarise_conversations, SummaryModel
+from kura.cluster import generate_base_clusters_from_conversation_summaries, ClusterDescriptionModel
+from kura.meta_cluster import reduce_clusters_from_base_clusters, MetaClusterModel
+from kura.dimensionality import reduce_dimensionality_from_clusters, HDBUMAP
+from kura.visualization import visualise_pipeline_results
+from kura.types import Conversation
+from kura.checkpoints import JSONLCheckpointManager
+
+
+async def main():
+    console = Console()
+
+    # Step 1: Define Models
+    summary_model = SummaryModel(
+        console=console,
+        cache=DiskCacheStrategy(cache_dir="./.summary"),  # Disk caching for speed
+    )
+    cluster_model = ClusterDescriptionModel(console=console)
+    meta_cluster_model = MetaClusterModel(console=console)
+    dimensionality_model = HDBUMAP()
+
+    # Step 2: Set up Checkpoints (for resuming interrupted runs)
+    checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+
+    # Step 3: Load conversations from HuggingFace dataset
+    console.print("[bold blue]Loading conversations...[/bold blue]")
+    conversations = Conversation.from_hf_dataset(
+        "ivanleomk/synthetic-gemini-conversations", split="train"
+    )
+    console.print(f"✓ Loaded {len(conversations)} conversations\n")
+
+    # Step 4: Process through the pipeline
+    console.print("[bold blue]Generating summaries...[/bold blue]")
+    summaries = await summarise_conversations(
+        conversations, model=summary_model, checkpoint_manager=checkpoint_manager
+    )
+    console.print(f"✓ Generated {len(summaries)} summaries\n")
+
+    console.print("[bold blue]Clustering conversations...[/bold blue]")
+    clusters = await generate_base_clusters_from_conversation_summaries(
+        summaries, model=cluster_model, checkpoint_manager=checkpoint_manager
+    )
+    console.print(f"✓ Created {len(clusters)} clusters\n")
+
+    console.print("[bold blue]Organizing into hierarchy...[/bold blue]")
+    reduced_clusters = await reduce_clusters_from_base_clusters(
+        clusters, model=meta_cluster_model, checkpoint_manager=checkpoint_manager
+    )
+    console.print(f"✓ Reduced to {len(reduced_clusters)} meta clusters\n")
+
+    console.print("[bold blue]Reducing dimensions for visualization...[/bold blue]")
+    projected_clusters = await reduce_dimensionality_from_clusters(
+        reduced_clusters,
+        model=dimensionality_model,
+        checkpoint_manager=checkpoint_manager,
+    )
+    console.print(f"✓ Projected {len(projected_clusters)} clusters\n")
+
+    # Step 5: Visualize results
+    console.print("[bold green]Visualization:[/bold green]\n")
+    visualise_pipeline_results(projected_clusters, style="basic")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Running the Example
+
+```bash
+# Install Kura
+uv pip install kura
+
+# Run the script
+python basic_analysis.py
+```
+
+## Expected Output
+
+```text
+Loading conversations...
+✓ Loaded 190 conversations
+
+Generating summaries...
+█████████████████████████████████ 190/190 0:00:18
+✓ Generated 190 summaries
+
+Clustering conversations...
+✓ Created 19 clusters
+
+Organizing into hierarchy...
+✓ Reduced to 8 meta clusters
+
+Reducing dimensions for visualization...
+✓ Projected 8 clusters
+
+Visualization:
+
+Programming Assistance (190 conversations)
+├── Data Analysis & Visualization (38 conversations)
+│   ├── R Programming for statistical analysis (12 conversations)
+│   ├── Tableau dashboard creation (10 conversations)
+│   └── Python data manipulation with pandas (16 conversations)
+├── Web Development (45 conversations)
+│   ├── React component development (20 conversations)
+│   ├── API integration issues (15 conversations)
+│   └── CSS styling and responsive design (10 conversations)
+└── Machine Learning (32 conversations)
+    ├── Model training with TensorFlow (18 conversations)
+    └── Data preprocessing challenges (14 conversations)
+```
+
+## Performance Metrics
+
+**First Run (No Cache)**:
+- Total time: ~21.9s
+- Summarization: ~18s (LLM calls)
+- Clustering: ~2s
+- Meta clustering: ~1.5s
+- Dimensionality reduction: ~0.4s
+
+**Second Run (With Cache)**:
+- Total time: ~2.1s
+- Summarization: ~0.1s (cached!)
+- Clustering: ~1.2s
+- Meta clustering: ~0.6s
+- Dimensionality reduction: ~0.2s
+
+<Tip>
+  **~10x speedup** with disk caching! Rerun the script to see instant results.
+</Tip>
+
+## Understanding Each Step
+
+### 1. Loading Data
+
+```python
+conversations = Conversation.from_hf_dataset(
+    "ivanleomk/synthetic-gemini-conversations", split="train"
+)
+```
+
+Kura supports multiple data sources:
+- HuggingFace datasets (shown above)
+- Claude conversation exports
+- Custom JSON/JSONL files
+- Direct Conversation objects
+
+See [Loading Data](/guides/data-loading) for all options.
+
+### 2. Summarization with Caching
+
+```python
+summary_model = SummaryModel(
+    console=console,
+    cache=DiskCacheStrategy(cache_dir="./.summary"),
+)
+```
+
+Summarization is the slowest step (LLM API calls). The `DiskCacheStrategy` saves results to disk so you never reprocess the same conversation twice.
+
+**Cache Key**: Based on conversation content + model + prompt, so changing parameters creates new cache entries.
+
+### 3. Clustering
+
+```python
+cluster_model = ClusterDescriptionModel(console=console)
+```
+
+By default, uses **MiniBatch K-means** clustering for speed. Groups conversations with similar summaries together.
+
+### 4. Meta Clustering
+
+```python
+meta_cluster_model = MetaClusterModel(console=console)
+```
+
+Reduces base clusters into a hierarchical structure. Makes large datasets navigable by grouping related clusters.
+
+### 5. Dimensionality Reduction
+
+```python
+dimensionality_model = HDBUMAP()
+```
+
+Reduces high-dimensional embeddings to 2D for visualization using HDBSCAN + UMAP.
+
+## Checkpointing System
+
+```python
+checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+```
+
+Checkpoints save intermediate results to disk. If your script crashes or you stop it:
+
+```bash
+# First run - generates all results
+python basic_analysis.py
+
+# Ctrl+C after summaries complete
+
+# Second run - resumes from checkpoint
+python basic_analysis.py  # Loads summaries from disk, continues from clustering
+```
+
+**Checkpoint Files**:
+```
+checkpoints/
+├── summaries.jsonl              # Conversation summaries
+├── clusters.jsonl                # Base clusters
+├── meta_clusters.jsonl          # Hierarchical clusters
+└── dimensionality.jsonl         # 2D projections
+```
+
+## Common Pitfalls
+
+<Warning>
+  **Pitfall 1: No API Key**
+  
+  If you see authentication errors, set your API key:
+  ```bash
+  export OPENAI_API_KEY="sk-..."
+  # Or use another provider (see Configuration)
+  ```
+</Warning>
+
+<Warning>
+  **Pitfall 2: Import Errors**
+  
+  Missing optional dependencies? Install the full package:
+  ```bash
+  uv pip install "kura[all]"
+  ```
+</Warning>
+
+<Warning>
+  **Pitfall 3: Slow First Run**
+  
+  The first run makes LLM API calls for every conversation. This is normal!
+  - 190 conversations: ~20-30s
+  - 1,000 conversations: ~2-3 minutes
+  - 10,000 conversations: ~20-30 minutes
+  
+  Use caching and checkpointing to avoid reprocessing.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Large Scale" icon="database" href="/examples/large-scale-datasets">
+    Process 10,000+ conversations with optimized checkpointing
+  </Card>
+  <Card title="Custom Metadata" icon="tag" href="/examples/custom-metadata">
+    Extract custom properties like sentiment and language
+  </Card>
+  <Card title="Compare Models" icon="scale-balanced" href="/examples/comparing-models">
+    Compare different LLM configurations and clustering methods
+  </Card>
+  <Card title="Web Interface" icon="browser" href="/guides/web-interface">
+    Visualize results in an interactive web UI
+  </Card>
+</CardGroup>
+
+## Full Script
+
+Copy this complete, runnable script:
+
+<CodeGroup>
+```python basic_analysis.py
+import asyncio
+from rich.console import Console
+from kura.cache import DiskCacheStrategy
+from kura.summarisation import summarise_conversations, SummaryModel
+from kura.cluster import generate_base_clusters_from_conversation_summaries, ClusterDescriptionModel
+from kura.meta_cluster import reduce_clusters_from_base_clusters, MetaClusterModel
+from kura.dimensionality import reduce_dimensionality_from_clusters, HDBUMAP
+from kura.visualization import visualise_pipeline_results
+from kura.types import Conversation
+from kura.checkpoints import JSONLCheckpointManager
+
+
+async def main():
+    console = Console()
+
+    # Define Models
+    summary_model = SummaryModel(
+        console=console,
+        cache=DiskCacheStrategy(cache_dir="./.summary"),
+    )
+    cluster_model = ClusterDescriptionModel(console=console)
+    meta_cluster_model = MetaClusterModel(console=console)
+    dimensionality_model = HDBUMAP()
+
+    # Define Checkpoints
+    checkpoint_manager = JSONLCheckpointManager("./checkpoints", enabled=True)
+
+    # Load conversations from Hugging Face dataset
+    conversations = Conversation.from_hf_dataset(
+        "ivanleomk/synthetic-gemini-conversations", split="train"
+    )
+
+    # Process through the pipeline step by step
+    summaries = await summarise_conversations(
+        conversations, model=summary_model, checkpoint_manager=checkpoint_manager
+    )
+
+    clusters = await generate_base_clusters_from_conversation_summaries(
+        summaries, model=cluster_model, checkpoint_manager=checkpoint_manager
+    )
+
+    reduced_clusters = await reduce_clusters_from_base_clusters(
+        clusters, model=meta_cluster_model, checkpoint_manager=checkpoint_manager
+    )
+
+    projected_clusters = await reduce_dimensionality_from_clusters(
+        reduced_clusters,
+        model=dimensionality_model,
+        checkpoint_manager=checkpoint_manager,
+    )
+
+    # Visualize results
+    visualise_pipeline_results(projected_clusters, style="basic")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```bash Install & Run
+# Install Kura
+uv pip install kura
+
+# Set API key (if using OpenAI)
+export OPENAI_API_KEY="sk-..."
+
+# Run
+python basic_analysis.py
+```
+</CodeGroup>

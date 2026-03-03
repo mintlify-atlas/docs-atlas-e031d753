@@ -1,0 +1,180 @@
+---
+title: "Summarisation"
+description: "API reference for conversation summarization components"
+---
+
+## SummaryModel
+
+Instructor-based summary model for conversation analysis using the CLIO framework.
+
+### Constructor
+
+```python
+SummaryModel(
+    model: Union[str, "KnownModelName"] = "openai/gpt-4o-mini",
+    max_concurrent_requests: int = 50,
+    checkpoint_filename: str = "summaries",
+    console: Optional[Console] = None,
+    cache: Optional[CacheStrategy] = None,
+)
+```
+
+<ParamField path="model" type="Union[str, KnownModelName]" default="openai/gpt-4o-mini">
+  Model identifier (e.g., "openai/gpt-4o-mini", "anthropic/claude-3-5-sonnet")
+</ParamField>
+
+<ParamField path="max_concurrent_requests" type="int" default="50">
+  Maximum concurrent API requests
+</ParamField>
+
+<ParamField path="checkpoint_filename" type="str" default="summaries">
+  Filename for checkpointing this model's output
+</ParamField>
+
+<ParamField path="console" type="Optional[Console]" default="None">
+  Rich console for progress tracking
+</ParamField>
+
+<ParamField path="cache" type="Optional[CacheStrategy]" default="None">
+  Caching strategy to use (optional)
+</ParamField>
+
+### Methods
+
+#### summarise()
+
+Summarise conversations with configurable parameters using the CLIO framework.
+
+```python
+async def summarise(
+    conversations: list[Conversation],
+    prompt: str = DEFAULT_SUMMARY_PROMPT,
+    *,
+    response_schema: Type[T] = GeneratedSummary,
+    temperature: float = 0.2,
+    **kwargs,
+) -> list[ConversationSummary]
+```
+
+<ParamField path="conversations" type="list[Conversation]" required>
+  List of conversations to summarize
+</ParamField>
+
+<ParamField path="prompt" type="str" default="DEFAULT_SUMMARY_PROMPT">
+  Custom prompt for CLIO analysis
+</ParamField>
+
+<ParamField path="response_schema" type="Type[T]" default="GeneratedSummary">
+  Pydantic model class for structured LLM output. Extend GeneratedSummary to add custom fields that will automatically be included in ConversationSummary.metadata
+</ParamField>
+
+<ParamField path="temperature" type="float" default="0.2">
+  LLM temperature for generation
+</ParamField>
+
+<ResponseField name="return" type="list[ConversationSummary]">
+  List of ConversationSummary objects with core fields populated and any additional fields from extended schemas in metadata
+</ResponseField>
+
+**Example:**
+
+```python
+from kura.summarisation import SummaryModel
+from kura.types import Conversation
+from kura.types.summarisation import GeneratedSummary
+
+class CustomSummary(GeneratedSummary):
+    sentiment: str
+    technical_complexity: int
+
+model = SummaryModel()
+summaries = await model.summarise(
+    conversations,
+    response_schema=CustomSummary,
+    prompt="Rate sentiment and technical complexity 1-10"
+)
+
+# Access core fields
+print(summaries[0].summary)
+# Access custom fields in metadata
+print(summaries[0].metadata["sentiment"])
+```
+
+---
+
+## summarise_conversations()
+
+Generate summaries for a list of conversations using the CLIO framework. This is a pure function that takes conversations and a summary model, and returns conversation summaries with automatic extensibility.
+
+```python
+async def summarise_conversations(
+    conversations: list[Conversation],
+    *,
+    model: BaseSummaryModel,
+    response_schema: Type[T] = GeneratedSummary,
+    prompt: str = DEFAULT_SUMMARY_PROMPT,
+    temperature: float = 0.2,
+    checkpoint_manager: Optional[BaseCheckpointManager] = None,
+    **kwargs,
+) -> list[ConversationSummary]
+```
+
+<ParamField path="conversations" type="list[Conversation]" required>
+  List of conversations to summarize
+</ParamField>
+
+<ParamField path="model" type="BaseSummaryModel" required>
+  Model to use for summarization (OpenAI, vLLM, local, etc.)
+</ParamField>
+
+<ParamField path="response_schema" type="Type[T]" default="GeneratedSummary">
+  Pydantic model class for LLM output. Extend GeneratedSummary to add custom fields that will appear in metadata
+</ParamField>
+
+<ParamField path="prompt" type="str" default="DEFAULT_SUMMARY_PROMPT">
+  Custom prompt to modify the CLIO analysis
+</ParamField>
+
+<ParamField path="temperature" type="float" default="0.2">
+  LLM temperature for generation
+</ParamField>
+
+<ParamField path="checkpoint_manager" type="Optional[BaseCheckpointManager]" default="None">
+  Optional checkpoint manager for caching
+</ParamField>
+
+<ResponseField name="return" type="list[ConversationSummary]">
+  List of ConversationSummary objects with core CLIO fields and any additional fields from extended schemas in metadata
+</ResponseField>
+
+**Example - Basic Usage:**
+
+```python
+from kura.summarisation import SummaryModel, summarise_conversations
+
+model = SummaryModel()
+summaries = await summarise_conversations(
+    conversations=my_conversations,
+    model=model
+)
+```
+
+**Example - Custom Analysis:**
+
+```python
+from kura.summarisation import summarise_conversations
+from kura.types.summarisation import GeneratedSummary
+
+class DetailedSummary(GeneratedSummary):
+    sentiment: str
+    technical_depth: int
+
+summaries = await summarise_conversations(
+    conversations=my_conversations,
+    model=model,
+    response_schema=DetailedSummary,
+    prompt="Analyze sentiment and rate technical depth 1-10"
+)
+# Custom fields available in metadata
+print(summaries[0].metadata["sentiment"])
+```
