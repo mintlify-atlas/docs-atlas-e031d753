@@ -243,6 +243,189 @@ The HFDatasetCheckpointManager has predefined schemas for:
 - **clusters**: `Cluster` objects with hierarchical relationships
 - **projected_clusters**: `ProjectedCluster` objects with 2D coordinates
 
+### ParquetCheckpointManager
+
+<Note>Requires the optional `parquet` dependency group: `pip install kura[parquet]`</Note>
+
+Parquet-based checkpoint system that provides better compression (~50% space savings) and faster loading compared to JSONL.
+
+```python
+from kura.checkpoints import ParquetCheckpointManager
+
+manager = ParquetCheckpointManager(
+    checkpoint_dir="./parquet-checkpoints",
+    enabled=True,
+    compression="snappy"
+)
+```
+
+<ParamField path="checkpoint_dir" type="str" required>
+  Directory path for saving Parquet files
+</ParamField>
+
+<ParamField path="enabled" type="bool" default="True">
+  Whether checkpointing is enabled
+</ParamField>
+
+<ParamField path="compression" type="str" default="snappy">
+  Compression algorithm: `snappy`, `gzip`, `brotli`, `lz4`, or `zstd`
+</ParamField>
+
+#### Features
+
+- **50% space savings**: Better compression than JSONL
+- **Faster loading**: Columnar format optimized for analytics
+- **Type-safe schemas**: PyArrow schema validation
+- **Multiple compression options**: Choose speed vs size tradeoff
+
+#### Example Usage
+
+```python
+from kura.checkpoints import ParquetCheckpointManager
+from kura.types import ConversationSummary
+
+# Initialize with gzip compression (better compression, slower)
+manager = ParquetCheckpointManager(
+    checkpoint_dir="./parquet-checkpoints",
+    compression="gzip"
+)
+
+# Save checkpoint
+summaries = [...]  # List of ConversationSummary objects
+manager.save_checkpoint("summaries", summaries)
+
+# Load checkpoint
+loaded = manager.load_checkpoint("summaries", ConversationSummary)
+```
+
+#### Compression Options
+
+| Algorithm | Speed | Compression | Best For |
+|-----------|-------|-------------|----------|
+| `snappy` | Fastest | Good | Default choice |
+| `lz4` | Very Fast | Good | Speed-critical |
+| `gzip` | Medium | Better | Balanced |
+| `zstd` | Medium | Best | Max compression |
+| `brotli` | Slow | Best | Archival |
+
+### SQLCheckpointManager
+
+<Note>Requires the optional `sqlmodel` dependency: `pip install sqlmodel`</Note>
+
+SQL-based checkpoint system with run tracking and rich querying capabilities. Supports SQLite, PostgreSQL, MySQL, and other SQLAlchemy-compatible databases.
+
+```python
+from kura.checkpoints import SQLCheckpointManager
+
+# SQLite (file-based, no server needed)
+manager = SQLCheckpointManager(
+    database_url="sqlite:///./kura-checkpoints.db",
+    enabled=True
+)
+
+# PostgreSQL (for production)
+manager = SQLCheckpointManager(
+    database_url="postgresql://user:password@localhost/kura_db"
+)
+```
+
+<ParamField path="database_url" type="str" required>
+  SQLAlchemy database URL:
+  - SQLite: `sqlite:///path/to/database.db`
+  - PostgreSQL: `postgresql://user:pass@localhost/dbname`
+  - MySQL: `mysql://user:pass@localhost/dbname`
+</ParamField>
+
+<ParamField path="enabled" type="bool" default="True">
+  Whether checkpointing is enabled
+</ParamField>
+
+#### Features
+
+- **Run tracking**: Track multiple analysis runs with metadata
+- **Rich querying**: SQL queries for filtering and analysis
+- **Relational data**: Proper foreign keys and relationships
+- **Production-ready**: PostgreSQL support for multi-user deployments
+- **ACID compliance**: Reliable transactions and data integrity
+
+#### Methods
+
+<ResponseField name="create_run" type="RunTable">
+  Create a new analysis run for organizing checkpoints.
+  
+  **Parameters:**
+  - `name` (str): Human-readable name for the run
+  - `description` (Optional[str]): Detailed description
+  - `config` (Optional[dict]): Configuration dictionary
+  
+  **Returns:** RunTable object with generated ID
+</ResponseField>
+
+<ResponseField name="get_run" type="Optional[RunTable]">
+  Retrieve a specific run by ID.
+  
+  **Parameters:**
+  - `run_id` (str): The run's unique identifier
+  
+  **Returns:** RunTable object or None
+</ResponseField>
+
+<ResponseField name="list_runs" type="List[RunTable]">
+  List all analysis runs.
+  
+  **Returns:** List of RunTable objects ordered by creation time
+</ResponseField>
+
+#### Example Usage
+
+```python
+from kura.checkpoints import SQLCheckpointManager
+from kura.types import ConversationSummary
+
+# Initialize with SQLite
+manager = SQLCheckpointManager("sqlite:///./kura.db")
+
+# Create a run for this analysis
+run = manager.create_run(
+    name="Production Analysis 2024-03",
+    description="Monthly conversation analysis",
+    config={"model": "gpt-4o", "clusters": 100}
+)
+
+print(f"Created run: {run.id}")
+
+# Save checkpoint (automatically associated with current run)
+summaries = [...]
+manager.save_checkpoint("summaries", summaries)
+
+# Query previous runs
+runs = manager.list_runs()
+for run in runs:
+    print(f"{run.name}: {run.status} - {run.created_at}")
+
+# Load from specific run
+manager.current_run_id = run.id
+loaded = manager.load_checkpoint("summaries", ConversationSummary)
+```
+
+#### PostgreSQL Production Setup
+
+```python
+# Production configuration with PostgreSQL
+manager = SQLCheckpointManager(
+    database_url="postgresql://kura_user:secure_pass@db.example.com:5432/kura_prod"
+)
+
+# Use connection pooling for better performance
+from sqlalchemy.pool import QueuePool
+manager.engine = create_engine(
+    database_url,
+    poolclass=QueuePool,
+    pool_size=10,
+    max_overflow=20
+)
+```
+
 ### MultiCheckpointManager
 
 Coordinates multiple checkpoint backends simultaneously for redundancy and performance optimization.

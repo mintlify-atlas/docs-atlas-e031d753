@@ -218,3 +218,188 @@ def cluster(
 <ResponseField name="return" type="dict[int, list[ConversationSummary]]">
   Dictionary mapping cluster IDs to their conversation summaries
 </ResponseField>
+
+## Clustering Method Classes
+
+These classes implement different clustering algorithms that can be used with `ClusterDescriptionModel` or directly for custom implementations.
+
+### KmeansClusteringMethod
+
+Standard K-means clustering implementation using scikit-learn. Best for medium-sized datasets (up to 10k items) where you want consistent, reproducible results.
+
+```python
+from kura.k_means import KmeansClusteringMethod
+
+method = KmeansClusteringMethod(clusters_per_group=10)
+```
+
+<ParamField path="clusters_per_group" type="int" default="10">
+  Target number of items per cluster. Number of clusters = ceil(n_items / clusters_per_group)
+</ParamField>
+
+#### Usage
+
+```python
+from kura.k_means import KmeansClusteringMethod
+from kura.cluster import ClusterDescriptionModel
+
+# Initialize clustering method
+clustering_method = KmeansClusteringMethod(clusters_per_group=15)
+
+# Use with ClusterDescriptionModel
+model = ClusterDescriptionModel()
+
+# The clustering method is used internally during cluster generation
+# to group similar conversation summaries
+```
+
+### MiniBatchKmeansClusteringMethod
+
+Memory-efficient MiniBatch K-means implementation for large datasets (100k+ items). Processes data in configurable batches to reduce memory usage.
+
+```python
+from kura.k_means import MiniBatchKmeansClusteringMethod
+
+method = MiniBatchKmeansClusteringMethod(
+    clusters_per_group=10,
+    batch_size=1000,
+    max_iter=100,
+    random_state=42
+)
+```
+
+<ParamField path="clusters_per_group" type="int" default="10">
+  Target number of items per cluster
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="1000">
+  Size of mini-batches for processing. Larger batches use more memory but may be more stable. Adjust based on available RAM.
+</ParamField>
+
+<ParamField path="max_iter" type="int" default="100">
+  Maximum number of iterations for convergence
+</ParamField>
+
+<ParamField path="random_state" type="int" default="42">
+  Random seed for reproducibility. Set to a fixed value for consistent results across runs.
+</ParamField>
+
+#### Key Differences from Standard K-means
+
+- **Lower memory usage**: Processes data in configurable batch sizes
+- **Faster convergence**: Updates centroids incrementally
+- **Slightly less accurate**: Results may vary between runs due to stochastic processing
+- **Better scalability**: Handles large datasets without memory issues
+
+#### When to Use
+
+- Processing 100k+ conversation summaries
+- Limited RAM availability
+- Need faster clustering speed
+- Can tolerate minor result variations
+
+#### Usage Example
+
+```python
+from kura.k_means import MiniBatchKmeansClusteringMethod
+from kura.cluster import ClusterDescriptionModel
+
+# For large-scale clustering
+method = MiniBatchKmeansClusteringMethod(
+    clusters_per_group=20,     # Larger groups for big datasets
+    batch_size=5000,           # Process 5k items at a time
+    max_iter=50,               # Fewer iterations for speed
+    random_state=42            # Reproducible results
+)
+
+# Use in pipeline
+model = ClusterDescriptionModel()
+# Pass method to clustering operations
+```
+
+### HDBSCANClusteringMethod
+
+Density-based clustering that automatically determines the number of clusters and identifies outliers. Best for datasets with natural density variations and noise.
+
+```python
+from kura.hdbscan import HDBSCANClusteringMethod
+
+method = HDBSCANClusteringMethod(
+    min_cluster_size=10,
+    min_samples=None,
+    cluster_selection_epsilon=0.0,
+    alpha=1.0,
+    cluster_selection_method="eom",
+    metric="euclidean"
+)
+```
+
+<ParamField path="min_cluster_size" type="int" default="10">
+  Minimum size of clusters. Smaller clusters are considered noise/outliers.
+</ParamField>
+
+<ParamField path="min_samples" type="Optional[int]" default="None">
+  Number of samples in a neighborhood for a point to be considered a core point. If None, defaults to min_cluster_size.
+</ParamField>
+
+<ParamField path="cluster_selection_epsilon" type="float" default="0.0">
+  Distance threshold for merging clusters. Clusters closer than this value will be merged.
+</ParamField>
+
+<ParamField path="alpha" type="float" default="1.0">
+  Distance scaling parameter for robust single linkage. Higher values make clustering more conservative.
+</ParamField>
+
+<ParamField path="cluster_selection_method" type="str" default="eom">
+  Method for selecting clusters from the tree:
+  - `eom`: Excess of Mass (default, more conservative)
+  - `leaf`: Leaf clustering (creates more, smaller clusters)
+</ParamField>
+
+<ParamField path="metric" type="str" default="euclidean">
+  Distance metric: `euclidean`, `manhattan`, `cosine`, `l1`, `l2`, etc.
+</ParamField>
+
+#### Key Features
+
+- **Automatic cluster detection**: No need to specify number of clusters
+- **Outlier identification**: Identifies noise points that don't fit any cluster
+- **Variable density**: Handles clusters of different densities
+- **No assumptions**: Doesn't assume spherical cluster shapes
+
+#### When to Use
+
+- Don't know how many clusters to expect
+- Dataset has natural outliers or noise
+- Clusters have varying densities
+- Need more flexible cluster shapes than K-means provides
+
+#### Usage Example
+
+```python
+from kura.hdbscan import HDBSCANClusteringMethod
+from kura.cluster import ClusterDescriptionModel
+
+# Initialize with appropriate parameters
+method = HDBSCANClusteringMethod(
+    min_cluster_size=15,                  # Minimum 15 conversations per cluster
+    cluster_selection_epsilon=0.5,        # Merge very similar clusters
+    cluster_selection_method="eom",       # Conservative clustering
+    metric="cosine"                       # Good for text embeddings
+)
+
+# Use in custom clustering pipeline
+# Note: Outliers are automatically reassigned to a separate cluster
+```
+
+#### Noise Handling
+
+<Note>
+HDBSCAN identifies outliers (noise points) and assigns them cluster ID -1. Kura automatically reassigns these to a separate cluster with the next available ID to maintain compatibility with the pipeline.
+</Note>
+
+```python
+# Example: 1000 items clustered
+# - 950 items in 10 dense clusters (IDs 0-9)
+# - 50 outliers automatically moved to cluster ID 10
+```
