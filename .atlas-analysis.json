@@ -1,0 +1,118 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Kura",
+  "projectDescription": "AI-powered conversation analysis library that clusters chat data to reveal patterns, pain points, and opportunities",
+  "theme": "palm",
+  "primaryColor": "#3F51B5",
+  "lightColor": "#7986CB",
+  "darkColor": "#303F9F",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core-concepts/overview",
+              "core-concepts/conversations",
+              "core-concepts/summarization",
+              "core-concepts/embedding",
+              "core-concepts/clustering",
+              "core-concepts/meta-clustering",
+              "core-concepts/dimensionality-reduction",
+              "core-concepts/checkpoints"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/data-loading",
+              "guides/custom-models",
+              "guides/caching",
+              "guides/visualization",
+              "guides/web-ui"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/basic-analysis",
+              "examples/large-scale-datasets",
+              "examples/custom-metadata",
+              "examples/comparing-models"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Components",
+            "pages": [
+              "api/summarisation",
+              "api/clustering",
+              "api/meta-clustering",
+              "api/dimensionality",
+              "api/embedding"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "api/conversation",
+              "api/conversation-summary",
+              "api/cluster",
+              "api/projected-cluster"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/checkpoints",
+              "api/cache",
+              "api/visualization",
+              "api/cli"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "LLM-powered conversation summarization with disk caching",
+    "Semantic clustering using embeddings and K-means/HDBSCAN",
+    "Hierarchical meta-clustering for pattern organization",
+    "Dimensionality reduction and interactive visualization",
+    "Checkpoint system for processing large datasets",
+    "Support for multiple data sources (HuggingFace, Claude, custom)",
+    "Built-in web UI for cluster exploration",
+    "Extensible architecture with custom models and extractors"
+  ],
+  "publicApiSurface": [
+    "summarise_conversations()",
+    "generate_base_clusters_from_conversation_summaries()",
+    "reduce_clusters_from_base_clusters()",
+    "reduce_dimensionality_from_clusters()",
+    "visualise_pipeline_results()",
+    "SummaryModel",
+    "ClusterDescriptionModel",
+    "MetaClusterModel",
+    "HDBUMAP",
+    "Conversation.from_hf_dataset()",
+    "Conversation.from_claude_conversation_dump()",
+    "JSONLCheckpointManager",
+    "HFDatasetCheckpointManager",
+    "DiskCacheStrategy",
+    "kura start-app"
+  ]
+}
